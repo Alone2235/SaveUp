@@ -14,6 +14,10 @@ data class Goal(
     val emoji: String = "🎯",
     val targetCent: Long,
     val deadlineMillis: Long? = null,
+    /** 解锁图片的本地 URI；为空则退回环形进度 */
+    val coverUri: String? = null,
+    /** 揭示方向：0=自下而上 1=自左向右 2=径向 */
+    val revealMode: Int = 0,
     /** 0=进行中 1=已完成 2=已归档 */
     val status: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),

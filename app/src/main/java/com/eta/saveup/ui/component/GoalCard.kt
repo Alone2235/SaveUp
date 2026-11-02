@@ -79,7 +79,17 @@ fun GoalCard(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // emoji 圆底
+            // 有解锁图就用缩略图，否则用 emoji
+            if (view.goal.coverUri != null) {
+                UnlockCover(
+                    model = view.goal.coverUri,
+                    progress = view.progress,
+                    revealMode = view.goal.revealMode,
+                    accent = accent,
+                    cornerRadius = 12,
+                    modifier = Modifier.size(48.dp)
+                )
+            } else {
             Box(
                 Modifier
                     .size(48.dp)
@@ -88,6 +98,7 @@ fun GoalCard(
                 contentAlignment = Alignment.Center
             ) {
                 Text(view.goal.emoji, fontSize = Fonts.title2)
+            }
             }
 
             Spacer(Modifier.width(Dimens.gap12))

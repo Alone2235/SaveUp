@@ -83,12 +83,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun moveDeposit(id: Long, goalId: Long?) = viewModelScope.launch { repo.moveDeposit(id, goalId) }
 
-    fun createGoal(title: String, emoji: String, targetCent: Long, deadline: Long?) =
-        viewModelScope.launch {
-            repo.createGoal(
-                Goal(title = title, emoji = emoji, targetCent = targetCent, deadlineMillis = deadline)
+    fun createGoal(
+        title: String,
+        emoji: String,
+        targetCent: Long,
+        deadline: Long?,
+        coverUri: String? = null,
+        revealMode: Int = 0
+    ) = viewModelScope.launch {
+        repo.createGoal(
+            Goal(
+                title = title,
+                emoji = emoji,
+                targetCent = targetCent,
+                deadlineMillis = deadline,
+                coverUri = coverUri,
+                revealMode = revealMode
             )
-        }
+        )
+    }
 
     fun updateGoal(goal: Goal) = viewModelScope.launch { repo.updateGoal(goal) }
 

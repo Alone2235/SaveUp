@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,10 +32,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
 import com.eta.saveup.data.db.Goal
 import com.eta.saveup.ui.component.AmountWheel
 import com.eta.saveup.ui.component.HapticsWrapper
+import com.eta.saveup.ui.component.UnlockCover
 import com.eta.saveup.ui.component.formatYuan
 import com.eta.saveup.ui.theme.Dimens
 import com.eta.saveup.ui.theme.Fonts
@@ -55,12 +62,30 @@ fun GoalEditSheet(
     existing: Goal?,
     haptics: HapticsWrapper,
     onDismiss: () -> Unit,
-    onSave: (title: String, emoji: String, targetCent: Long) -> Unit
+    onSave: (title: String, emoji: String, targetCent: Long, coverUri: String?, revealMode: Int) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var title by remember { mutableStateOf(existing?.title ?: "") }
     var emoji by remember { mutableStateOf(existing?.emoji ?: "🎯") }
     var targetCent by remember { mutableLongStateOf(existing?.targetCent ?: 100000L) }
+    var coverUri by remember { mutableStateOf(existing?.coverUri) }
+    var revealMode by remember { mutableIntStateOf(existing?.revealMode ?: 0) }
+
+    val ctx = LocalContext.current
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            // 持久化读取权限，重启后依然可用
+            runCatching {
+                ctx.contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            }
+            coverUri = uri.toString()
+            haptics.success()
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -139,6 +164,95 @@ fun GoalEditSheet(
 
             Spacer(Modifier.height(Dimens.gap16))
 
+            // 解锁封面
+            Text(
+                text = "解锁图（可选）",
+                fontSize = Fonts.caption,
+                fontWeight = FontWeight.Medium,
+                color = IosWhite.copy(alpha = 0.42f)
+            )
+            Spacer(Modifier.height(Dimens.gap8))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(84.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFFEDF0F6))
+                        .clickable {
+                            haptics.tick()
+                            picker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (coverUri != null) {
+                        UnlockCover(
+                            model = coverUri,
+                            progress = 1f,
+                            cornerRadius = 14,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("＋", fontSize = Fonts.title1, color = HyperBlue)
+                            Text(
+                                "选图",
+                                fontSize = Fonts.micro,
+                                color = IosWhite.copy(alpha = 0.42f)
+                            )
+                        }
+                    }
+                }
+
+                if (coverUri != null) {
+                    Spacer(Modifier.width(Dimens.gap12))
+                    Column {
+                        Text(
+                            text = "攒钱进度会一点点把这图点亮",
+                            fontSize = Fonts.micro,
+                            color = IosWhite.copy(alpha = 0.42f)
+                        )
+                        Spacer(Modifier.height(Dimens.gap8))
+                        Row(horizontalArrangement = Arrangement.spacedBy(Dimens.gap8)) {
+                            listOf("上推" to 0, "左推" to 1, "扩散" to 2).forEach { (label, mode) ->
+                                val sel = revealMode == mode
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(
+                                            if (sel) HyperBlue else Color(0xFFEDF0F6)
+                                        )
+                                        .clickable {
+                                            haptics.tick()
+                                            revealMode = mode
+                                        }
+                                        .padding(horizontal = Dimens.gap12, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = label,
+                                        fontSize = Fonts.micro,
+                                        color = if (sel) Color.White else IosWhite.copy(alpha = 0.6f)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(Dimens.gap8))
+                        Text(
+                            text = "移除",
+                            fontSize = Fonts.micro,
+                            color = Color(0xFFFF6B6B),
+                            modifier = Modifier.clickable {
+                                haptics.warn()
+                                coverUri = null
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(Dimens.gap16))
+
             Text(
                 text = "目标金额",
                 fontSize = Fonts.caption,
@@ -173,7 +287,7 @@ fun GoalEditSheet(
                     .background(if (enabled) HyperBlue else Color(0xFFDCE0E8))
                     .clickable(enabled = enabled) {
                         haptics.success()
-                        onSave(title.trim(), emoji, targetCent)
+                        onSave(title.trim(), emoji, targetCent, coverUri, revealMode)
                     },
                 contentAlignment = Alignment.Center
             ) {

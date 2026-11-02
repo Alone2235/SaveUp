@@ -216,12 +216,20 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
                 showNewGoal = false
                 editGoal = null
             },
-            onSave = { title, emoji, cent ->
+            onSave = { title, emoji, cent, cover, mode ->
                 val ex = editGoal
                 if (ex == null) {
-                    vm.createGoal(title, emoji, cent, null)
+                    vm.createGoal(title, emoji, cent, null, cover, mode)
                 } else {
-                    vm.updateGoal(ex.copy(title = title, emoji = emoji, targetCent = cent))
+                    vm.updateGoal(
+                        ex.copy(
+                            title = title,
+                            emoji = emoji,
+                            targetCent = cent,
+                            coverUri = cover,
+                            revealMode = mode
+                        )
+                    )
                 }
                 showNewGoal = false
                 editGoal = null

@@ -3,26 +3,84 @@ package com.eta.saveup.ui.theme
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-object Dimens {
-    val controlRadius = 12.dp
-    val cardRadius = 18.dp
-    val panelRadius = 24.dp
-    val sheetRadius = 28.dp
-    val pillRadius = 32.dp
+/**
+ * 间距系统：严格 4pt 网格。
+ * 所有 padding / spacing / size 都从这里取，不再出现 14dp、18dp 这种游离值。
+ */
+object Space {
+    val xxs = 4.dp
+    val xs = 8.dp
+    val sm = 12.dp
+    val md = 16.dp
+    val lg = 24.dp
+    val xl = 32.dp
+    val xxl = 48.dp
 
-    val unit = 8.dp
-    val pagePadding = 16.dp
-    val cardPadding = 14.dp
-    val itemPadH = 16.dp
-    val itemPadV = 12.dp
-    val gap4 = 4.dp
+    /** 页面左右边距 */
+    val page = 20.dp
+    /** 卡片内边距 */
+    val card = 16.dp
+    /** 卡片之间 */
+    val gap = 12.dp
+    /** 分组之间 */
+    val section = 28.dp
+}
+
+/** 圆角系统：三档，不再出现 10/12/14/18/24/28/32 混用 */
+object Radius {
+    /** 小控件：标签、小按钮、数字格 */
+    val small = 10.dp
+    /** 卡片、列表项 */
+    val medium = 16.dp
+    /** 大面板、底部弹层 */
+    val large = 24.dp
+    /** 胶囊 */
+    val pill = 999.dp
+}
+
+/** 字号：保留原有层级，行高统一 */
+object Fonts {
+    val display = 32.sp
+    val title1 = 24.sp
+    val title2 = 18.sp
+    val bodyStrong = 16.sp
+    val body = 15.sp
+    val caption = 13.sp
+    val micro = 11.sp
+
+    val amountHuge = 52.sp
+    val amountWheel = 26.sp
+}
+
+/** 文本透明度分级 */
+object TextAlpha {
+    const val primary = 1f
+    const val secondary = 0.58f
+    const val tertiary = 0.38f
+    const val disabled = 0.24f
+}
+
+/** 兼容旧引用 */
+object Dimens {
+    val controlRadius = Radius.small
+    val cardRadius = Radius.medium
+    val panelRadius = Radius.large
+    val sheetRadius = Radius.large
+    val pillRadius = Radius.pill
+
+    val unit = Space.xs
+    val pagePadding = Space.page
+    val cardPadding = Space.card
+    val itemPadH = Space.md
+    val itemPadV = Space.sm
+    val gap4 = Space.xxs
     val gap6 = 6.dp
-    val gap8 = 8.dp
-    val gap12 = 12.dp
-    val gap16 = 16.dp
-    val gap24 = 24.dp
-    val gap32 = 32.dp
-    val gap48 = 48.dp
+    val gap8 = Space.xs
+    val gap12 = Space.sm
+    val gap16 = Space.md
+    val gap24 = Space.lg
+    val gap32 = Space.xl
+    val gap48 = Space.xxl
 
     val rowHeight = 72.dp
     val touchTarget = 48.dp
@@ -30,30 +88,5 @@ object Dimens {
     val buttonLarge = 56.dp
     val tabBarHeight = 64.dp
 
-    /** 滚轮单行高度 */
     val wheelItem = 56.dp
-}
-
-object Fonts {
-    val bodyLineHeight = 22.sp
-    val display = 32.sp
-    val title1 = 26.sp
-    val title2 = 19.sp
-    val bodyStrong = 16.sp
-    val body = 15.sp
-    val caption = 13.sp
-    val micro = 12.sp
-
-    /** 攒钱金额主数字 */
-    val amountHuge = 52.sp
-    val amountWheel = 34.sp
-    val progressPercent = 15.sp
-}
-
-/** 文本颜色按透明度分级 */
-object TextAlpha {
-    const val primary = 1f
-    const val secondary = 0.62f
-    const val tertiary = 0.42f
-    const val disabled = 0.28f
 }

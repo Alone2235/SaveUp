@@ -11,7 +11,7 @@ import kotlinx.coroutines.launch
 
 @Database(
     entities = [Goal::class, Deposit::class, DailyStat::class],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -21,6 +21,14 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun dailyDao(): DailyDao
 
     companion object {
+        /** v1 → v2：目标表增加解锁封面字段 */
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE goals ADD COLUMN coverUri TEXT")
+                db.execSQL("ALTER TABLE goals ADD COLUMN revealMode INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile private var INSTANCE: AppDatabase? = null
 
         fun get(context: Context): AppDatabase = INSTANCE ?: synchronized(this) {
@@ -29,6 +37,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun build(ctx: Context): AppDatabase =
             Room.databaseBuilder(ctx, AppDatabase::class.java, "saveup.db")
+                .addMigrations(MIGRATION_1_2)
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
