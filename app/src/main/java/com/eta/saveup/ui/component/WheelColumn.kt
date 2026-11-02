@@ -4,12 +4,10 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -20,11 +18,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -39,8 +35,8 @@ import kotlin.math.roundToInt
 /**
  * 单列数字滚轮。
  *
- * 用自绘等距布局（非 LazyColumn），中央位置恒为容器中点，
- * 滚动位置用 Animatable<Float> 维护（单位：行），松手后按速度抛投再吸附到整行。
+ * 自绘等距布局（不用 LazyColumn），中央位置恒为容器中点；
+ * 滚动位置用 Animatable<Float> 维护（单位：行），松手后按累计位移吸附到整行。
  */
 @Composable
 fun WheelColumn(
@@ -61,15 +57,15 @@ fun WheelColumn(
     val itemPx = with(density) { itemHeight.toPx() }
     val maxIndex = items.lastIndex
 
-    val position = remember { Animatable(selectedIndex.toFloat()) }
+    val position = remember { Animatable(selectedIndex.coerceIn(0, maxIndex).toFloat()) }
     val scope = rememberCoroutineScope()
     val hap = rememberUpdatedState(haptics)
     val onSel = rememberUpdatedState(onSelected)
 
-    // 外部选中值变化（且用户没在拖）→ 平滑滚过去
+    // 外部选中值变化 → 平滑归位
     LaunchedEffect(selectedIndex) {
         val target = selectedIndex.coerceIn(0, maxIndex).toFloat()
-        if (abs(position.value - target) > 0.01f && position.isRunning.not() || abs(position.value - target) > 1.5f) {
+        if (abs(position.value - target) > 0.01f) {
             position.animateTo(target, spring(stiffness = 900f, dampingRatio = 1f))
         }
     }
@@ -79,59 +75,50 @@ fun WheelColumn(
             .fillMaxWidth()
             .height(itemHeight * visibleCount)
             .clip(RoundedCornerShape(12.dp))
-            .pointerInput(maxIndex) {
-                awaitEachGesture {
-                    val down = awaitFirstDown()
-                    val tracker = VelocityTracker()
-                    tracker.resetTracking()
-                    tracker.addPosition(down.uptimeMillis, Offset(0f, down.position.y))
-                    position.stop()
+            .pointerInput(maxIndex, itemPx) {
+                var dragTotal = 0f
+                var lastTick = position.value.roundToInt()
 
-                    var lastY = down.position.y
-                    var lastTime = down.uptimeMillis
-                    var lastTickIdx = position.value.roundToInt()
-                    var dragged = false
-
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) break
-
-                        val dy = change.position.y - lastY
-                        val dt = change.uptimeMillis - lastTime
-                        if (dt > 0) tracker.addPosition(change.uptimeMillis, Offset(0f, change.position.y))
-                        lastY = change.position.y
-                        lastTime = change.uptimeMillis
-                        if (abs(dy) > 0.5f) dragged = true
-
+                detectDragGestures(
+                    onDragStart = {
+                        dragTotal = 0f
+                        lastTick = position.value.roundToInt()
+                        scope.launch { position.stop() }
+                    },
+                    onDragEnd = {
+                        // 按行吸附
+                        val projected = (position.value - dragTotal * 0.08f / itemPx)
+                            .coerceIn(0f, maxIndex.toFloat())
+                        val target = projected.roundToInt().coerceIn(0, maxIndex).toFloat()
                         scope.launch {
-                            val next = (position.value - dy / itemPx).coerceIn(0f, maxIndex.toFloat())
-                            position.snapTo(next)
+                            position.animateTo(target, spring(stiffness = 520f, dampingRatio = 0.86f))
+                            if (target.roundToInt() != lastTick) hap.value?.wheel()
+                            onSel.value(target.roundToInt())
                         }
-                        change.consume()
-
-                        val idx = position.value.roundToInt()
-                        if (idx != lastTickIdx) {
-                            lastTickIdx = idx
-                            hap.value?.wheel()
+                    },
+                    onDragCancel = {
+                        val target = position.value.roundToInt().coerceIn(0, maxIndex).toFloat()
+                        scope.launch {
+                            position.animateTo(target, spring(stiffness = 520f, dampingRatio = 0.86f))
+                            onSel.value(target.roundToInt())
                         }
                     }
+                ) { change, dragAmount ->
+                    change.consume()
+                    dragTotal += dragAmount.y
+                    val next = (position.value - dragAmount.y / itemPx)
+                        .coerceIn(0f, maxIndex.toFloat())
+                    scope.launch { position.snapTo(next) }
 
-                    // 抛投 + 吸附
-                    val velocity = if (dragged) tracker.calculateVelocity().y else 0f
-                    val projected = (position.value - velocity / itemPx * 0.28f)
-                        .coerceIn(-1f, maxIndex + 1f)
-                    val target = projected.roundToInt().coerceIn(0, maxIndex).toFloat()
-                    position.animateTo(
-                        target,
-                        spring(stiffness = 520f, dampingRatio = 0.86f)
-                    )
-                    if (target.roundToInt() != lastTickIdx) hap.value?.wheel()
-                    onSel.value(target.roundToInt())
+                    val idx = next.roundToInt()
+                    if (idx != lastTick) {
+                        lastTick = idx
+                        hap.value?.wheel()
+                    }
                 }
             }
     ) {
-        // 中央选中带：淡底 + 细描边，明确"就是这一格"
+        // 中央选中带：淡底 + 细描边
         Box(
             Modifier
                 .align(Alignment.Center)
