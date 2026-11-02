@@ -67,7 +67,10 @@ data class Entry(
 }
 
 /** 历史表结构，保留以兼容旧库迁移；新逻辑不再写入 */
-@Entity(tableName = "deposits")
+@Entity(
+    tableName = "deposits",
+    indices = [Index("goalId"), Index("createdAt")]
+)
 data class Deposit(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val goalId: Long? = null,

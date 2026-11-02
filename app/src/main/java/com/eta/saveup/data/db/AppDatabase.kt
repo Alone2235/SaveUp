@@ -54,6 +54,10 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_entries_goalId ON entries(goalId)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_entries_createdAt ON entries(createdAt)")
 
+                // 确保 deposits 旧索引存在（实体仍声明了索引，Room 升级后会校验）
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_deposits_goalId ON deposits(goalId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_deposits_createdAt ON deposits(createdAt)")
+
                 // 旧记录迁移：SAVED(0) → KEPT(0)+SETTLED(1)；SPENT(1) → BOUGHT(1)+SETTLED(1)
                 db.execSQL(
                     """
