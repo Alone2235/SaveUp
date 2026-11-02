@@ -160,7 +160,7 @@ fun GoalCard(
             // 右侧百分比
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "${(view.progress * 100).toInt()}%",
+                    text = formatPercent(view.progress),
                     fontSize = Fonts.title2,
                     fontWeight = FontWeight.Bold,
                     color = accent

@@ -96,3 +96,26 @@ fun SectionTitle(text: String, trailing: String? = null) {
             ?: Spacer(Modifier.width(0.dp))
     }
 }
+
+/**
+ * 进度百分比文案。
+ *
+ * 直接用 toInt() 会把 1.7% 显示成 0%、把 99.6% 显示成 99%，
+ * 金额很小或差一点点的时候会误导人。规则：
+ * - 0 → "0%"
+ * - 0 < p < 1 → "<1%"
+ * - 1 <= p < 100 → 一位小数，整数时省略小数
+ * - >= 100 → "100%"
+ */
+fun formatPercent(progress: Float): String {
+    val p = progress.coerceIn(0f, 1f) * 100f
+    return when {
+        p <= 0f -> "0%"
+        p < 1f -> "<1%"
+        p >= 99.95f -> "100%"
+        else -> {
+            val one = (p * 10).toInt() / 10f
+            if (one % 1f == 0f) "${one.toInt()}%" else "%.1f%%".format(one)
+        }
+    }
+}

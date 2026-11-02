@@ -42,6 +42,7 @@ import com.eta.saveup.ui.component.PillTag
 import com.eta.saveup.ui.component.ProgressRing
 import com.eta.saveup.ui.component.SectionTitle
 import com.eta.saveup.ui.component.SurfaceCard
+import com.eta.saveup.ui.component.formatPercent
 import com.eta.saveup.ui.component.UnlockCover
 import com.eta.saveup.ui.component.formatYuanInt
 import com.eta.saveup.ui.component.pressScale
@@ -225,7 +226,7 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
                             label = "percent"
                         )
                         Text(
-                            text = "${percentAnim.toInt()}%",
+                            text = formatPercent(percentAnim / 100f),
                             fontSize = Fonts.title2,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -247,7 +248,7 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
                             label = "percent"
                         )
                         Text(
-                            text = "${percentAnim.toInt()}%",
+                            text = formatPercent(percentAnim / 100f),
                             fontSize = Fonts.amountHuge,
                             fontWeight = FontWeight.Bold,
                             color = accent

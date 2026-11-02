@@ -42,6 +42,7 @@ import com.eta.saveup.ui.component.AmountRow
 import com.eta.saveup.ui.component.HapticsWrapper
 import com.eta.saveup.ui.component.ProgressRing
 import com.eta.saveup.ui.component.SectionTitle
+import com.eta.saveup.ui.component.formatPercent
 import com.eta.saveup.ui.component.formatYuanInt
 import com.eta.saveup.ui.theme.Dimens
 import com.eta.saveup.ui.theme.Fonts
@@ -119,7 +120,7 @@ fun GoalDetailScreen(
                     ProgressRing(progress = progress, diameter = 180.dp, strokeWidth = 14.dp) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                text = "${(progress * 100).toInt()}%",
+                                text = formatPercent(progress),
                                 fontSize = Fonts.amountHuge,
                                 fontWeight = FontWeight.Bold,
                                 color = if (done) GoldAccent else HyperBlue
