@@ -12,9 +12,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,15 +31,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withFrameNanos
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
  * 单列数字滚轮。
  *
- * 自绘等距布局（不用 LazyColumn），中央位置恒为容器中点；
- * 滚动位置用 Animatable<Float> 维护（单位：行），松手后按累计位移吸附到整行。
+ * 拖动用普通 Float 状态即时跟手（零开销），
+ * 松手后按速度做惯性抛投（逐帧衰减）再吸附到整行。
  */
 @Composable
 fun WheelColumn(
@@ -57,17 +62,54 @@ fun WheelColumn(
     val itemPx = with(density) { itemHeight.toPx() }
     val maxIndex = items.lastIndex
 
-    val position = remember { Animatable(selectedIndex.coerceIn(0, maxIndex).toFloat()) }
+    // 当前滚动位置（单位：行），拖动和动画都写它
+    var position by remember { mutableFloatStateOf(selectedIndex.coerceIn(0, maxIndex).toFloat()) }
     val scope = rememberCoroutineScope()
     val hap = rememberUpdatedState(haptics)
     val onSel = rememberUpdatedState(onSelected)
+    val animJob = remember { arrayOfNulls<Job>(1) }
 
-    // 外部选中值变化 → 平滑归位
+    // 外部选中值变化 → 归位
     LaunchedEffect(selectedIndex) {
         val target = selectedIndex.coerceIn(0, maxIndex).toFloat()
-        if (abs(position.value - target) > 0.01f) {
-            position.animateTo(target, spring(stiffness = 900f, dampingRatio = 1f))
+        if (abs(position - target) > 0.01f) {
+            animJob[0]?.cancel()
+            animJob[0] = scope.launch {
+                animateTo(position, target) { position = it }
+                onSel.value(target.roundToInt())
+            }
         }
+    }
+
+    suspend fun animateTo(from: Float, target: Float, set: (Float) -> Unit) {
+        val anim = Animatable(from)
+        anim.animateTo(target, spring(stiffness = 620f, dampingRatio = 0.85f)) {
+            set(value)
+        }
+    }
+
+    /** 惯性抛投，v0 为每帧行数 */
+    suspend fun fling(v0: Float) {
+        var v = v0
+        var lastIdx = position.roundToInt()
+        while (abs(v) > 0.01f) {
+            withFrameNanos { }
+            val next = (position + v).coerceIn(0f, maxIndex.toFloat())
+            if ((next <= 0f && v < 0f) || (next >= maxIndex.toFloat() && v > 0f)) v = 0f
+            position = next
+            val idx = position.roundToInt()
+            if (idx != lastIdx) {
+                lastIdx = idx
+                hap.value?.wheel()
+            }
+            v *= 0.93f
+        }
+    }
+
+    suspend fun settle() {
+        val target = position.roundToInt().coerceIn(0, maxIndex).toFloat()
+        animateTo(position, target) { position = it }
+        onSel.value(target.roundToInt())
     }
 
     Box(
@@ -76,49 +118,42 @@ fun WheelColumn(
             .height(itemHeight * visibleCount)
             .clip(RoundedCornerShape(12.dp))
             .pointerInput(maxIndex, itemPx) {
-                var dragTotal = 0f
-                var lastTick = position.value.roundToInt()
+                var sampleTime = 0L
+                var sampleValue = 0f
 
                 detectDragGestures(
                     onDragStart = {
-                        dragTotal = 0f
-                        lastTick = position.value.roundToInt()
-                        scope.launch { position.stop() }
+                        animJob[0]?.cancel()
+                        sampleTime = 0L
+                        sampleValue = position
                     },
                     onDragEnd = {
-                        // 按行吸附
-                        val projected = (position.value - dragTotal * 0.08f / itemPx)
-                            .coerceIn(0f, maxIndex.toFloat())
-                        val target = projected.roundToInt().coerceIn(0, maxIndex).toFloat()
-                        scope.launch {
-                            position.animateTo(target, spring(stiffness = 520f, dampingRatio = 0.86f))
-                            if (target.roundToInt() != lastTick) hap.value?.wheel()
-                            onSel.value(target.roundToInt())
+                        val now = System.nanoTime()
+                        val dt = if (sampleTime > 0L) (now - sampleTime) / 1_000_000f else 0f
+                        val dv = sampleValue - position
+                        val linesPerMs = if (dt > 20f) dv / dt else 0f
+                        val v0 = linesPerMs * 16.6f
+                        animJob[0] = scope.launch {
+                            if (abs(v0) > 0.02f) fling(v0)
+                            settle()
                         }
                     },
                     onDragCancel = {
-                        val target = position.value.roundToInt().coerceIn(0, maxIndex).toFloat()
-                        scope.launch {
-                            position.animateTo(target, spring(stiffness = 520f, dampingRatio = 0.86f))
-                            onSel.value(target.roundToInt())
-                        }
+                        animJob[0] = scope.launch { settle() }
                     }
                 ) { change, dragAmount ->
                     change.consume()
-                    dragTotal += dragAmount.y
-                    val next = (position.value - dragAmount.y / itemPx)
-                        .coerceIn(0f, maxIndex.toFloat())
-                    scope.launch { position.snapTo(next) }
-
-                    val idx = next.roundToInt()
-                    if (idx != lastTick) {
-                        lastTick = idx
-                        hap.value?.wheel()
+                    val now = System.nanoTime()
+                    val dt = (now - sampleTime) / 1_000_000f
+                    if (sampleTime == 0L || dt > 60f) {
+                        sampleTime = now
+                        sampleValue = position
                     }
+                    position = (position - dragAmount.y / itemPx)
+                        .coerceIn(0f, maxIndex.toFloat())
                 }
             }
     ) {
-        // 中央选中带：淡底 + 细描边
         Box(
             Modifier
                 .align(Alignment.Center)
@@ -131,7 +166,7 @@ fun WheelColumn(
 
         WheelContent(
             items = items,
-            position = position.value,
+            position = position,
             itemHeightPx = itemPx,
             visibleCount = visibleCount,
             textSize = textSize,
@@ -152,29 +187,29 @@ private fun WheelContent(
     inactiveColor: Color
 ) {
     val half = visibleCount / 2 + 1
-    val baseIdx = position.toInt()
+    val center = position.roundToInt()
+    val from = (center - half).coerceAtLeast(0)
+    val to = (center + half).coerceAtMost(items.lastIndex)
 
     Layout(
         content = {
-            for (i in (baseIdx - half)..(baseIdx + half)) {
-                if (i in items.indices) {
-                    val distance = abs(i - position)
-                    val centered = distance < 0.5f
-                    Text(
-                        text = items[i],
-                        fontSize = textSize.sp,
-                        fontWeight = if (centered) FontWeight.Bold else FontWeight.Normal,
-                        color = if (centered) activeColor else inactiveColor,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        modifier = Modifier.graphicsLayer {
-                            val scale = if (centered) 1f else (1f - distance * 0.10f).coerceIn(0.6f, 1f)
-                            scaleX = scale
-                            scaleY = scale
-                            alpha = if (centered) 1f else (1f - distance * 0.32f).coerceIn(0.10f, 0.8f)
-                        }
-                    )
-                }
+            for (i in from..to) {
+                val distance = abs(i - position)
+                val centered = distance < 0.5f
+                Text(
+                    text = items[i],
+                    fontSize = textSize.sp,
+                    fontWeight = if (centered) FontWeight.Bold else FontWeight.Normal,
+                    color = if (centered) activeColor else inactiveColor,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    modifier = Modifier.graphicsLayer {
+                        val scale = if (centered) 1f else (1f - distance * 0.10f).coerceIn(0.6f, 1f)
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = if (centered) 1f else (1f - distance * 0.32f).coerceIn(0.10f, 0.8f)
+                    }
+                )
             }
         }
     ) { measurables, constraints ->
@@ -183,13 +218,13 @@ private fun WheelContent(
         val placeables = measurables.map {
             it.measure(constraints.copy(minWidth = width, maxWidth = width))
         }
+        val centerY = height / 2f
 
         layout(width, height) {
             placeables.forEachIndexed { n, p ->
-                val logicalIndex = baseIdx - half + n
-                val dy = (logicalIndex - position) * itemHeightPx +
-                    (height / 2f) - (p.height / 2f)
-                p.place(x = 0, y = dy.roundToInt())
+                val logicalIndex = from + n
+                val elementCenter = centerY + (logicalIndex - position) * itemHeightPx
+                p.place(x = 0, y = (elementCenter - p.height / 2f).roundToInt())
             }
         }
     }
