@@ -20,8 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -47,14 +45,20 @@ import com.eta.saveup.ui.theme.Space
 /**
  * 金额录入。
  *
- * 数位分列：万 / 千 / 百 / 十 / 元 . 角 / 分，七列全部保留。
+ * ## 逻辑原则（这是修了很多次 bug 之后定下来的，别再破坏）
  *
- * 万、千、百默认折叠 —— 但**折叠即清零**：
- * 收起高位的瞬间把那几位写回 0，并把金额同步上报。
- * 这样既不会出现「收起后残值污染下次输入」的老问题，
- * 也不会为了绕 bug 把列合并掉。
+ * 1. **金额只有一个真相：[amountCent]。** 本组件不维护任何数位副本。
+ *    每次绘制都从 [amountCent] 现算各位数字，改值也只通过 [onAmountChange] 往外报。
+ *    这样不可能出现"内部值 ≠ 外部值"的错位。
  *
- * 顶部大字可直接点开键盘输入，含分位的精确金额走这条路。
+ * 2. **折叠 = 该位不存在。** 万、千、百收起时，切换动作里直接把这些位
+ *    从金额中清零，没有"藏着但还留着"的中间态。
+ *    所以永远不会有残值污染。
+ *
+ * 3. **滚轮只是投影。** 滚轮的位置来自 [amountCent] 推导出的数字，
+ *    外部改金额时用 key(金额) 重建，不做双向同步。
+ *
+ * @param highExpanded 是否展开万/千/百，由调用方持有，切换时负责清零高位
  */
 @Composable
 fun AmountWheel(
@@ -63,84 +67,57 @@ fun AmountWheel(
     modifier: Modifier = Modifier,
     maxCent: Long = 99_999_999L,
     haptics: HapticsWrapper? = null,
-    activeColor: Color = Color(0xFF1B1F27),
-    inactiveColor: Color = Color(0xFFB6BCC8),
-    labelColor: Color = Color(0xFF878D99),
-    accent: Color = HyperBlue
+    accent: Color = HyperBlue,
+    /** 是否展开高位；null 表示组件自己管理 */
+    highExpanded: Boolean? = null,
+    onHighExpandedChange: ((Boolean) -> Unit)? = null
 ) {
-    val clamped = amountCent.coerceIn(0L, maxCent)
+    val cent = amountCent.coerceIn(0L, maxCent)
 
-    var wan by remember { mutableIntStateOf((clamped / 1_000_000L % 10).toInt()) }
-    var qian by remember { mutableIntStateOf((clamped / 100_000L % 10).toInt()) }
-    var bai by remember { mutableIntStateOf((clamped / 10_000L % 10).toInt()) }
-    var shi by remember { mutableIntStateOf((clamped / 1_000L % 10).toInt()) }
-    var yuan by remember { mutableIntStateOf((clamped / 100L % 10).toInt()) }
-    var jiao by remember { mutableIntStateOf((clamped / 10L % 10).toInt()) }
-    var fen by remember { mutableIntStateOf((clamped % 10L).toInt()) }
+    // 各位数字：直接从当前金额现算，不缓存
+    val wan = ((cent / 1_000_000L) % 10).toInt()
+    val qian = ((cent / 100_000L) % 10).toInt()
+    val bai = ((cent / 10_000L) % 10).toInt()
+    val shi = ((cent / 1_000L) % 10).toInt()
+    val yuan = ((cent / 100L) % 10).toInt()
+    val jiao = ((cent / 10L) % 10).toInt()
+    val fen = (cent % 10L).toInt()
 
-    var displayCent by remember { mutableLongStateOf(clamped) }
-    var lastSeen by remember { mutableLongStateOf(clamped) }
-
-    // 高位是否展开
-    var highExpanded by remember { mutableStateOf(clamped >= 10_000L) }
+    var internalExpanded by remember { mutableStateOf(cent >= 10_000L) }
+    val expanded = highExpanded ?: internalExpanded
 
     var editing by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
 
-    fun calcCent(w: Int = wan, q: Int = qian, b: Int = bai, s: Int = shi,
-                 y: Int = yuan, j: Int = jiao, f: Int = fen): Long =
-        w * 1_000_000L + q * 100_000L + b * 10_000L +
-            s * 1_000L + y * 100L + j * 10L + f
-
-    /** 上报当前完整金额 */
-    fun push(cent: Long = calcCent()) {
-        if (cent == displayCent) return
-        displayCent = cent
-        lastSeen = cent
-        onAmountChange(cent)
+    fun setExpanded(v: Boolean) {
+        if (highExpanded == null) internalExpanded = v
+        onHighExpandedChange?.invoke(v)
     }
 
-    /** 外部整体赋值（键盘输入） */
-    fun applyExternal(cent: Long) {
-        val c = cent.coerceIn(0L, maxCent)
-        wan = (c / 1_000_000L % 10).toInt()
-        qian = (c / 100_000L % 10).toInt()
-        bai = (c / 10_000L % 10).toInt()
-        shi = (c / 1_000L % 10).toInt()
-        yuan = (c / 100L % 10).toInt()
-        jiao = (c / 10L % 10).toInt()
-        fen = (c % 10L).toInt()
-        if (c >= 10_000L) highExpanded = true
-        displayCent = c
+    /**
+     * 改某一位的值。
+     * @param power 该位在「分」单位下的权重（万=1_000_000 ... 分=1）
+     */
+    fun setDigit(power: Long, value: Int) {
+        val clampedValue = value.coerceIn(0, 9).toLong()
+        val current = (cent / power) % 10
+        val next = cent - current * power + clampedValue * power
+        onAmountChange(next.coerceIn(0L, maxCent))
     }
 
-    /** 收起高位：先清零再收起，避免残值留在内存里 */
+    /** 收起高位：高位彻底清零，不是藏起来 */
     fun collapseHigh() {
-        if (!highExpanded) return
-        if (wan != 0 || qian != 0 || bai != 0) {
-            wan = 0; qian = 0; bai = 0
-            push(calcCent(w = 0, q = 0, b = 0))
-        }
-        highExpanded = false
+        val cleared = cent % 10_000L  // 只保留千位以下
+        if (cleared != cent) onAmountChange(cleared)
+        setExpanded(false)
     }
 
-    /** 展开高位：按当前金额定位，不携带脏值 */
-    fun expandHigh() {
-        if (highExpanded) return
-        highExpanded = true
-    }
-
-    LaunchedEffect(clamped) {
-        if (clamped != lastSeen) {
-            lastSeen = clamped
-            if (clamped != calcCent()) applyExternal(clamped)
-        }
-    }
+    fun expandHigh() = setExpanded(true)
 
     LaunchedEffect(editing) {
         if (editing) {
-            editText = formatInput(displayCent)
+            editText = formatInput(cent)
             focusRequester.requestFocus()
         }
     }
@@ -168,9 +145,12 @@ fun AmountWheel(
                         value = editText,
                         onValueChange = { raw ->
                             val filtered = raw.filter { it.isDigit() || it == '.' }
-                            if (filtered.length <= 12) {
+                            if (filtered.length <= 2 + 8) {
                                 editText = filtered
-                                parseCent(filtered)?.let { applyExternal(it) }
+                                parseCent(filtered)?.let {
+                                    val c = it.coerceIn(0L, maxCent)
+                                    onAmountChange(c)
+                                }
                             }
                         },
                         singleLine = true,
@@ -192,7 +172,7 @@ fun AmountWheel(
                 }
             } else {
                 Text(
-                    text = "¥" + formatAmount(displayCent),
+                    text = "¥" + formatAmount(cent),
                     fontSize = Fonts.amountHuge,
                     fontWeight = FontWeight.Bold,
                     color = accent
@@ -221,86 +201,92 @@ fun AmountWheel(
                     color = Color.White
                 )
             }
-        } else {
-            Spacer(Modifier.height(Space.sm))
+            return@Column
+        }
 
-            // 展开后列多，权重相应收窄；收起时留白更多
-            val cellWeight = if (highExpanded) 0.86f else 1.12f
+        Spacer(Modifier.height(Space.sm))
 
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                if (highExpanded) {
-                    DigitCell(wan, "万", cellWeight, haptics) { v ->
-                        wan = v; push(calcCent(w = v))
-                    }
-                    DigitCell(qian, "千", cellWeight, haptics) { v ->
-                        qian = v; push(calcCent(q = v))
-                    }
-                    DigitCell(bai, "百", cellWeight, haptics) { v ->
-                        bai = v; push(calcCent(b = v))
-                    }
-                }
+        val cellWeight = if (expanded) 0.86f else 1.12f
 
-                DigitCell(shi, "十", cellWeight, haptics) { v ->
-                    shi = v; push(calcCent(s = v))
-                }
-                DigitCell(yuan, "元", cellWeight, haptics) { v ->
-                    yuan = v; push(calcCent(y = v))
-                }
-
-                DotCell()
-
-                DigitCell(jiao, "角", cellWeight, haptics) { v ->
-                    jiao = v; push(calcCent(j = v))
-                }
-                DigitCell(fen, "分", cellWeight, haptics) { v ->
-                    fen = v; push(calcCent(f = v))
-                }
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            if (expanded) {
+                DigitCell(wan, "万", cellWeight, cent, haptics) { setDigit(1_000_000L, it) }
+                DigitCell(qian, "千", cellWeight, cent, haptics) { setDigit(100_000L, it) }
+                DigitCell(bai, "百", cellWeight, cent, haptics) { setDigit(10_000L, it) }
             }
 
-            Spacer(Modifier.height(Space.xs))
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(Radius.pill))
-                    .background(accent.copy(alpha = 0.08f))
-                    .clickable {
-                        haptics?.tick()
-                        if (highExpanded) collapseHigh() else expandHigh()
-                    }
-                    .padding(horizontal = Space.sm, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (highExpanded) "收起千位 / 万位" else "展开千位 / 万位",
-                    fontSize = Fonts.micro,
-                    color = accent,
-                    fontWeight = FontWeight.Medium
-                )
-            }
+            DigitCell(shi, "十", cellWeight, cent, haptics) { setDigit(1_000L, it) }
+            DigitCell(yuan, "元", cellWeight, cent, haptics) { setDigit(100L, it) }
+
+            DotCell()
+
+            DigitCell(jiao, "角", cellWeight, cent, haptics) { setDigit(10L, it) }
+            DigitCell(fen, "分", cellWeight, cent, haptics) { setDigit(1L, it) }
+        }
+
+        Spacer(Modifier.height(Space.xs))
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(Radius.pill))
+                .background(accent.copy(alpha = 0.08f))
+                .clickable {
+                    haptics?.tick()
+                    if (expanded) collapseHigh() else expandHigh()
+                }
+                .padding(horizontal = Space.sm, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (expanded) "收起千位 / 万位（高位清零）" else "展开千位 / 万位",
+                fontSize = Fonts.micro,
+                color = accent,
+                fontWeight = FontWeight.Medium
+            )
         }
     }
 }
 
-/** 单个数位列：滚轮 + 下方单位标签，各列等高 */
+/**
+ * 单个数位列。
+ *
+ * @param currentCent 当前金额，作为滚轮重建的 key —— 金额一变就按新值重建，
+ *                    滚轮自身不持有业务状态，只负责"拨到几就报几"。
+ */
 @Composable
 private fun RowScope.DigitCell(
-    value: Int,
+    digit: Int,
     label: String,
     weight: Float,
+    currentCent: Long,
     haptics: HapticsWrapper?,
-    onValue: (Int) -> Unit
+    onDigit: (Int) -> Unit
 ) {
     Box(Modifier.weight(weight)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            // 非受控滚轮：内部只在自身被拨动时回调
-            key(label) {
+            // 只在「外部改了本位」时重建滚轮。
+            // 自己拨动上报 → 外部值绕回来 → 不重建（否则会打断手感）。
+            var lastReported by remember { mutableStateOf(digit) }
+            var rebuildKey by remember { mutableStateOf(0) }
+
+            LaunchedEffect(digit) {
+                if (digit != lastReported) {
+                    lastReported = digit
+                    rebuildKey++
+                }
+            }
+
+            key(rebuildKey) {
                 WheelColumn(
                     items = (0..9).map { it.toString() },
-                    initialIndex = value,
-                    onSelected = onValue,
+                    initialIndex = digit,
+                    onSelected = { v ->
+                        lastReported = v
+                        onDigit(v)
+                    },
                     itemHeight = 44.dp,
                     visibleCount = 3,
                     textSize = 26,
@@ -322,10 +308,7 @@ private fun RowScope.DigitCell(
 @Composable
 private fun DotCell() {
     Column(Modifier.width(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier.height(44.dp * 3f),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(Modifier.height(44.dp * 3f), contentAlignment = Alignment.Center) {
             Text(
                 text = ".",
                 fontSize = 26.sp,
@@ -334,11 +317,7 @@ private fun DotCell() {
             )
         }
         Spacer(Modifier.height(Space.xxs))
-        Text(
-            text = " ",
-            fontSize = 10.sp,
-            maxLines = 1
-        )
+        Text(text = " ", fontSize = 10.sp, maxLines = 1)
     }
 }
 
