@@ -83,6 +83,9 @@ fun AmountWheel(
     // 上一次父级可见的金额；用于区分"自己推送的"与"外部修改的"
     var lastSeen by remember { mutableLongStateOf(clamped) }
 
+    // 顶部大字显示值：由 emit/applyExternal 直接驱动，保证与滚轮一致
+    var displayCent by remember { mutableLongStateOf(clamped) }
+
     var highExpanded by remember { mutableStateOf(clamped >= 10_000L) }
     var editing by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf("") }
@@ -93,14 +96,17 @@ fun AmountWheel(
             shi * 1_000L + yuan * 100L + jiao * 10L + fen
 
     fun push() {
-        lastSeen = currentValue()
-        onAmountChange(currentValue())
+        val v = currentValue()
+        displayCent = v
+        lastSeen = v
+        onAmountChange(v)
     }
 
     /** 用显式参数拼装金额并上报，避免读到同帧旧快照 */
     fun emit(w: Int, q: Int, b: Int, s2: Int, y: Int, jj: Int, f: Int) {
         val cent = w * 1_000_000L + q * 100_000L + b * 10_000L +
             s2 * 1_000L + y * 100L + jj * 10L + f
+        displayCent = cent
         lastSeen = cent
         onAmountChange(cent)
     }
@@ -116,6 +122,7 @@ fun AmountWheel(
         jiao = (c / 10L % 10).toInt()
         fen = (c % 10L).toInt()
         if (c >= 10_000L) highExpanded = true
+        displayCent = c
         rev++
     }
 
@@ -129,7 +136,7 @@ fun AmountWheel(
 
     LaunchedEffect(editing) {
         if (editing) {
-            editText = formatInput(currentValue())
+            editText = formatInput(displayCent)
             focusRequester.requestFocus()
         }
     }
@@ -181,7 +188,7 @@ fun AmountWheel(
                 }
             } else {
                 Text(
-                    text = "¥" + formatAmount(currentValue()),
+                    text = "¥" + formatAmount(displayCent),
                     fontSize = Fonts.amountHuge,
                     fontWeight = FontWeight.Bold,
                     color = accent
@@ -221,21 +228,16 @@ fun AmountWheel(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                AnimatedVisibility(
-                    visible = highExpanded,
-                    enter = expandHorizontally() + fadeIn(),
-                    exit = shrinkHorizontally() + fadeOut()
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        DigitCell(wan, "万", cellWeight, rev, haptics) { v ->
-                            wan = v; emit(v, qian, bai, shi, yuan, jiao, fen)
-                        }
-                        DigitCell(qian, "千", cellWeight, rev, haptics) { v ->
-                            qian = v; emit(wan, v, bai, shi, yuan, jiao, fen)
-                        }
-                        DigitCell(bai, "百", cellWeight, rev, haptics) { v ->
-                            bai = v; emit(wan, qian, v, shi, yuan, jiao, fen)
-                        }
+                // 高位：展开时与其他列同级，权重一致，不会挤成小格
+                if (highExpanded) {
+                    DigitCell(wan, "万", cellWeight, rev, haptics) { v ->
+                        wan = v; emit(v, qian, bai, shi, yuan, jiao, fen)
+                    }
+                    DigitCell(qian, "千", cellWeight, rev, haptics) { v ->
+                        qian = v; emit(wan, v, bai, shi, yuan, jiao, fen)
+                    }
+                    DigitCell(bai, "百", cellWeight, rev, haptics) { v ->
+                        bai = v; emit(wan, qian, v, shi, yuan, jiao, fen)
                     }
                 }
 
@@ -246,13 +248,20 @@ fun AmountWheel(
                     yuan = v; emit(wan, qian, bai, shi, v, jiao, fen)
                 }
 
-                Text(
-                    text = ".",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = activeColor,
-                    modifier = Modifier.padding(horizontal = 2.dp)
-                )
+                // 小数点：固定窄宽，两侧列宽完全对称
+                Column(Modifier.width(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    // 与数字滚轮同高，小数点垂直居中
+                    Box(Modifier.height(44.dp * 3f), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = ".",
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = activeColor,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    Box(Modifier.height(16.dp))
+                }
 
                 DigitCell(jiao, "", cellWeight, rev, haptics, showLabel = false) { v ->
                     jiao = v; emit(wan, qian, bai, shi, yuan, v, fen)
@@ -311,10 +320,11 @@ private fun RowScope.DigitCell(
                     haptics = haptics
                 )
             }
-            if (showLabel) {
-                Text(label, fontSize = 10.sp, color = Color(0xFF878D99))
-            } else {
-                Spacer(Modifier.height(12.dp))
+            // 标签区：无论有没有文字都占同一高度，保证各列滚轮垂直对齐
+            Box(Modifier.height(16.dp), contentAlignment = Alignment.Center) {
+                if (showLabel) {
+                    Text(label, fontSize = 10.sp, color = Color(0xFF878D99))
+                }
             }
         }
     }
