@@ -77,14 +77,8 @@ class SaveRepository(private val db: AppDatabase) {
                 savedCount = cur.savedCount + 1
             )
         )
-        // 目标攒满自动标完成
-        goalId?.let { gid ->
-            val goal = goalDao.get(gid) ?: return@let
-            val sum = depositDao.getByGoal(gid).filter { it.status == Deposit.SAVED }.sumOf { it.amountCent }
-            if (goal.status == Goal.ACTIVE && sum >= goal.targetCent) {
-                goalDao.update(goal.copy(status = Goal.DONE))
-            }
-        }
+        // 目标状态重算（攒满自动完成，多退少补都靠这一处）
+        goalId?.let { gid -> refreshGoalStatus(gid) }
     }
 
     /** 破戒了：记一笔花销，从目标里扣 */
@@ -101,28 +95,42 @@ class SaveRepository(private val db: AppDatabase) {
     suspend fun deleteDeposit(id: Long) {
         val d = depositDao.get(id) ?: return
         depositDao.delete(id)
+
         // 回滚当日统计
-        val cal = Calendar.getInstance().apply { timeInMillis = d.createdAt }
-        val day = cal.get(Calendar.YEAR) * 10000 +
-            (cal.get(Calendar.MONTH) + 1) * 100 + cal.get(Calendar.DAY_OF_MONTH)
-        val cur = dailyDao.get(day) ?: return
-        dailyDao.upsert(
-            if (d.status == Deposit.SPENT)
-                cur.copy(spentCent = (cur.spentCent - d.amountCent).coerceAtLeast(0))
-            else
-                cur.copy(
-                    savedCent = (cur.savedCent - d.amountCent).coerceAtLeast(0),
-                    savedCount = (cur.savedCount - 1).coerceAtLeast(0)
-                )
-        )
-        // 目标可能不再是已完成状态
-        d.goalId?.let { gid ->
-            val goal = goalDao.get(gid) ?: return@let
-            if (goal.status == Goal.DONE) {
-                val sum = depositDao.getByGoal(gid)
-                    .filter { it.status == Deposit.SAVED }.sumOf { it.amountCent }
-                if (sum < goal.targetCent) goalDao.update(goal.copy(status = Goal.ACTIVE))
-            }
+        val day = dayKey(d.createdAt)
+        val cur = dailyDao.get(day)
+        if (cur != null) {
+            dailyDao.upsert(
+                if (d.status == Deposit.SPENT)
+                    cur.copy(spentCent = (cur.spentCent - d.amountCent).coerceAtLeast(0))
+                else
+                    cur.copy(
+                        savedCent = (cur.savedCent - d.amountCent).coerceAtLeast(0),
+                        savedCount = (cur.savedCount - 1).coerceAtLeast(0)
+                    )
+            )
+        }
+
+        // 目标状态无条件重算：删掉任何一笔都可能让它不再达标
+        d.goalId?.let { gid -> refreshGoalStatus(gid) }
+    }
+
+    /**
+     * 按当前流水重算目标完成状态。
+     * 增、删、改金额后都要调，避免状态与实际金额脱节。
+     */
+    suspend fun refreshGoalStatus(goalId: Long) {
+        val goal = goalDao.get(goalId) ?: return
+        if (goal.status == Goal.ARCHIVED) return
+
+        val sum = depositDao.getByGoal(goalId)
+            .filter { it.status == Deposit.SAVED }
+            .sumOf { it.amountCent }
+
+        val shouldBeDone = sum >= goal.targetCent
+        val newStatus = if (shouldBeDone) Goal.DONE else Goal.ACTIVE
+        if (goal.status != newStatus) {
+            goalDao.update(goal.copy(status = newStatus))
         }
     }
 
