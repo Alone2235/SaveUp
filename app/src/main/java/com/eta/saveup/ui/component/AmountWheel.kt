@@ -88,13 +88,13 @@ fun AmountWheel(
     var editText by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
 
-    val current: Long
-        get() = wan * 1_000_000L + qian * 100_000L + bai * 10_000L +
+    fun currentValue(): Long =
+        wan * 1_000_000L + qian * 100_000L + bai * 10_000L +
             shi * 1_000L + yuan * 100L + jiao * 10L + fen
 
     fun push() {
-        lastSeen = current
-        onAmountChange(current)
+        lastSeen = currentValue()
+        onAmountChange(currentValue())
     }
 
     /** 外部设定整个金额（键盘输入）：重算所有位并重建滚轮 */
@@ -115,13 +115,13 @@ fun AmountWheel(
         // 父级值变了 != 自己推送出去的值 → 属于外部修改，重建滚轮
         if (clamped != lastSeen) {
             lastSeen = clamped
-            if (clamped != current) applyExternal(clamped)
+            if (clamped != currentValue()) applyExternal(clamped)
         }
     }
 
     LaunchedEffect(editing) {
         if (editing) {
-            editText = formatInput(current)
+            editText = formatInput(currentValue())
             focusRequester.requestFocus()
         }
     }
@@ -173,7 +173,7 @@ fun AmountWheel(
                 }
             } else {
                 Text(
-                    text = "¥" + formatAmount(current),
+                    text = "¥" + formatAmount(currentValue()),
                     fontSize = Fonts.amountHuge,
                     fontWeight = FontWeight.Bold,
                     color = accent
