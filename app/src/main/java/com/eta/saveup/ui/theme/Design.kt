@@ -31,21 +31,21 @@ object Dimens {
     val tabBarHeight = 64.dp
 
     /** 滚轮单行高度 */
-    val wheelItem = 56.dp
+    val wheelItem = 54.dp
 }
 
 object Fonts {
     val bodyLineHeight = 22.sp
-    val display = 28.sp
-    val title1 = 22.sp
-    val title2 = 17.sp
-    val bodyStrong = 15.sp
-    val body = 14.sp
-    val caption = 12.sp
-    val micro = 11.sp
+    val display = 32.sp
+    val title1 = 26.sp
+    val title2 = 19.sp
+    val bodyStrong = 16.sp
+    val body = 15.sp
+    val caption = 13.sp
+    val micro = 12.sp
 
     /** 攒钱金额主数字 */
-    val amountHuge = 44.sp
+    val amountHuge = 52.sp
     val amountWheel = 34.sp
     val progressPercent = 15.sp
 }

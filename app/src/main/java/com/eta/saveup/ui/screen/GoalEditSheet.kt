@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.eta.saveup.data.db.Goal
 import com.eta.saveup.ui.component.AmountWheel
 import com.eta.saveup.ui.component.HapticsWrapper
+import com.eta.saveup.ui.component.formatYuan
 import com.eta.saveup.ui.theme.Dimens
 import com.eta.saveup.ui.theme.Fonts
 import com.eta.saveup.ui.theme.HyperBlue
@@ -154,8 +155,7 @@ fun GoalEditSheet(
 
             Spacer(Modifier.height(Dimens.gap16))
             Text(
-                text = "「" + (title.ifBlank { "未命名" }) + "」 ¥" + (targetCent / 100) +
-                    " · 分 " + (targetCent % 100).toString().padStart(2, '0'),
+                text = "「" + title.ifBlank { "未命名" } + "」目标 " + formatYuan(targetCent),
                 fontSize = Fonts.micro,
                 color = IosWhite.copy(alpha = 0.30f),
                 modifier = Modifier.padding(horizontal = Dimens.gap4)
