@@ -79,6 +79,8 @@ fun WheelColumn(
     val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
 
     var lastTick by remember { mutableIntStateOf(selectedIndex) }
+    // 本列最近一次主动上报给外部的值；用于区分"自己滚的"与"外部要求改的"
+    var lastReported by remember { mutableIntStateOf(selectedIndex) }
 
     /** 当前居中位置对应的「真实下标」 */
     fun currentRealIndex(): Int {
@@ -106,15 +108,20 @@ fun WheelColumn(
                     }
                 }
             }
-            if (!scrolling) onSelected(real)
+            if (!scrolling) {
+                lastReported = real
+                onSelected(real)
+            }
         }
     }
 
-    // 循环边界静默归位：滑到第一/最后一圈时跳回中间圈
+    // 循环边界静默归位：只在本列滚动停止后校正，避免打断滚动、也避免互相干扰
     LaunchedEffect(listState, n, loops) {
         if (!looping) return@LaunchedEffect
-        snapshotFlow { listState.firstVisibleItemIndex }
-            .collect { idx ->
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling ->
+                if (scrolling) return@collect
+                val idx = listState.firstVisibleItemIndex
                 when {
                     idx < n -> listState.scrollToItem(idx + n * (loops - 2))
                     idx >= n * (loops - 1) -> listState.scrollToItem(idx - n * (loops - 2))
@@ -122,20 +129,17 @@ fun WheelColumn(
             }
     }
 
-    // 外部改值 → 平滑滚到对应位置
+    // 外部改值 → 滚到对应位置。
+    // 用「本列自己最近上报过的值」做闸门：别的列滚动引起的重组不会误触发本列滚动。
     LaunchedEffect(selectedIndex, n) {
-        if (selectedIndex in items.indices) {
-            val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-            val currentReal = if (looping)
-                (((listState.firstVisibleItemIndex + fractional.roundToInt()) % n) + n) % n
-            else listState.firstVisibleItemIndex
+        if (selectedIndex !in items.indices) return@LaunchedEffect
+        if (selectedIndex == lastReported) return@LaunchedEffect // 就是自己上报的值，不动
+        if (listState.isScrollInProgress) return@LaunchedEffect // 正在滚，不打扰
 
-            if (currentReal != selectedIndex) {
-                val target = if (looping) midStart + selectedIndex else selectedIndex
-                listState.animateScrollToItem(target)
-                lastTick = selectedIndex
-            }
-        }
+        val target = if (looping) midStart + selectedIndex else selectedIndex
+        listState.animateScrollToItem(target)
+        lastTick = selectedIndex
+        lastReported = selectedIndex
     }
 
     Box(

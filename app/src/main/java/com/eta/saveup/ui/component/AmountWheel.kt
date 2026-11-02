@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -204,9 +205,9 @@ fun AmountWheel(
                 )
 
                 // 角
-                DigitCell(jiao, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, it * 10 + fen)) }, cellWeight, showLabel = false, haptics = haptics)
+                DigitCell(jiao, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, it * 10 + fen)) }, cellWeight, showLabel = false, haptics = haptics, keyTag = "jiao")
                 // 分
-                DigitCell(fen, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, jiao * 10 + it)) }, cellWeight, showLabel = false, haptics = haptics)
+                DigitCell(fen, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, jiao * 10 + it)) }, cellWeight, showLabel = false, haptics = haptics, keyTag = "fen")
             }
 
             if (!highExpanded) {
@@ -241,19 +242,22 @@ private fun RowScope.DigitCell(
     onValue: (Int) -> Unit,
     weight: Float = 1f,
     showLabel: Boolean = true,
-    haptics: HapticsWrapper? = null
+    haptics: HapticsWrapper? = null,
+    keyTag: String = label
 ) {
     Box(Modifier.weight(weight)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            WheelColumn(
-                items = remember { (0..9).map { it.toString() } },
-                selectedIndex = value,
-                onSelected = onValue,
-                itemHeight = 44.dp,
-                visibleCount = 3,
-                textSize = 26,
-                haptics = haptics
-            )
+            key(keyTag) {
+                WheelColumn(
+                    items = remember { (0..9).map { it.toString() } },
+                    selectedIndex = value,
+                    onSelected = onValue,
+                    itemHeight = 44.dp,
+                    visibleCount = 3,
+                    textSize = 26,
+                    haptics = haptics
+                )
+            }
             if (showLabel) {
                 Text(label, fontSize = 10.sp, color = Color(0xFF878D99))
             } else {
