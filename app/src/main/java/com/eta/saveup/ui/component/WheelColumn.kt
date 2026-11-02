@@ -79,89 +79,83 @@ fun WheelColumn(
     val fling = rememberSnapFlingBehavior(lazyListState = listState)
     val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
 
+    // 唯一真相：listState 的位置。不维护影子状态，只用它判断"是否用户主动操作"。
     var lastTick by remember { mutableIntStateOf(selectedIndex) }
-    // 本列最近一次主动上报给外部的值；区分"自己滚的"与"外部要求改的"
-    var lastReported by remember { mutableIntStateOf(selectedIndex) }
-    // 程序内部滚动（循环归位 / 外部同步）期间，不向上报，避免回环
-    var internalScroll by remember { mutableStateOf(false) }
+
+    var lastSyncedValue by remember { mutableIntStateOf(selectedIndex) }
+    // 外部同步期间屏蔽上报，避免"同步→上报→重组→再同步"的回环
+    var suppressReport by remember { mutableStateOf(false) }
 
     fun realOf(absolute: Int): Int =
         if (looping) ((absolute % n) + n) % n else absolute.coerceIn(0, n - 1)
 
-    /** 当前居中位置对应的真实下标 */
     fun currentReal(): Int {
         val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
         return realOf(listState.firstVisibleItemIndex + fractional.roundToInt())
     }
 
-    // 单一状态机：滚动中 → 震动；停止 → 归位（如有需要）→ 上报
+    // 用户操作驱动：跨行震动 + 停止后上报
     LaunchedEffect(listState, n, loops) {
-        var lastVibrateAt = 0L
-        snapshotFlow { listState.isScrollInProgress }
-            .collect { scrolling ->
-                if (scrolling) return@collect
-                // 滚动停止
-
-                // 1) 循环边界归位（内部动作，不上报）
-                if (looping) {
-                    val idx = listState.firstVisibleItemIndex
-                    val fix = when {
-                        idx < n -> idx + n * (loops - 2)
-                        idx >= n * (loops - 1) -> idx - n * (loops - 2)
-                        else -> null
-                    }
-                    if (fix != null) {
-                        internalScroll = true
-                        listState.scrollToItem(fix)
-                        internalScroll = false
-                        return@collect
-                    }
-                }
-
-                // 2) 上报（归位或外部同步期间不上报）
-                if (!internalScroll) {
-                    val real = currentReal()
-                    if (real != lastReported) {
-                        lastReported = real
-                        lastTick = real
-                        onSelected(real)
-                    }
-                }
-            }
-    }
-
-    // 跨整行震动（拖动手势进行中）
-    LaunchedEffect(listState, n) {
         var lastVibrateAt = 0L
         snapshotFlow {
             val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-            listState.firstVisibleItemIndex + fractional.roundToInt()
-        }.collect { absolute ->
-            if (!listState.isScrollInProgress) return@collect
-            val real = realOf(absolute)
-            if (real != lastTick) {
-                lastTick = real
-                val now = System.currentTimeMillis()
-                if (now - lastVibrateAt >= 45L) {
-                    lastVibrateAt = now
-                    haptics?.wheel()
+            val absolute = listState.firstVisibleItemIndex + fractional.roundToInt()
+            Triple(realOf(absolute), listState.isScrollInProgress, listState.firstVisibleItemIndex)
+        }.collect { (real, scrolling, rawIndex) ->
+            if (scrolling) {
+                if (real != lastTick) {
+                    lastTick = real
+                    val now = System.currentTimeMillis()
+                    if (now - lastVibrateAt >= 45L) {
+                        lastVibrateAt = now
+                        haptics?.wheel()
+                    }
                 }
+                return@collect
+            }
+
+            // 停止：先做循环归位，再上报
+            if (looping) {
+                val fix = when {
+                    rawIndex < n -> rawIndex + n * (loops - 2)
+                    rawIndex >= n * (loops - 1) -> rawIndex - n * (loops - 2)
+                    else -> null
+                }
+                if (fix != null) {
+                    listState.scrollToItem(fix)
+                    return@collect
+                }
+            }
+
+            if (suppressReport) return@collect
+
+            val settled = currentReal()
+            if (settled != lastTick || settled != lastSyncedValue) {
+                lastTick = settled
+                lastSyncedValue = settled
+                onSelected(settled)
             }
         }
     }
 
-    // 外部改值 → 滚到对应位置；只处理"不是自己上报的那个值"
-    LaunchedEffect(selectedIndex, n) {
+    // 外部同步：只在"外部值确实变了"时执行一次，用序号避免重复
+    LaunchedEffect(selectedIndex) {
         if (selectedIndex !in items.indices) return@LaunchedEffect
-        if (selectedIndex == lastReported) return@LaunchedEffect
         if (listState.isScrollInProgress) return@LaunchedEffect
+        // 与当前轮子位置一致 → 不需要动
+        if (selectedIndex == currentReal()) {
+            lastSyncedValue = selectedIndex
+            lastTick = selectedIndex
+            return@LaunchedEffect
+        }
 
-        val target = if (looping) midStart + selectedIndex else selectedIndex
-        internalScroll = true
-        listState.animateScrollToItem(target)
-        internalScroll = false
+        suppressReport = true
+        listState.scrollToItem(if (looping) midStart + selectedIndex else selectedIndex)
+        lastSyncedValue = selectedIndex
         lastTick = selectedIndex
-        lastReported = selectedIndex
+        // 等一拍让 snapshotFlow 把这次内部滚动消化掉，再恢复上报
+        kotlinx.coroutines.delay(80)
+        suppressReport = false
     }
 
     Box(
