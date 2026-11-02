@@ -22,7 +22,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -77,14 +76,22 @@ fun WheelColumn(
         return (listState.firstVisibleItemIndex + Math.round(fractional)).coerceIn(0, maxIndex)
     }
 
-    // 震动：跨越整行就触发
+    // 震动：只在手指拖动阶段按时间节流触发，惯性滑行不震，避免打断手感
     LaunchedEffect(listState) {
+        var lastVibrateAt = 0L
         snapshotFlow {
             val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-            (listState.firstVisibleItemIndex + Math.round(fractional)).coerceIn(0, maxIndex)
-        }.collect { idx ->
-            if (idx != lastTick) {
-                lastTick = idx
+            val idx = (listState.firstVisibleItemIndex + Math.round(fractional)).coerceIn(0, maxIndex)
+            Triple(idx, listState.isScrollInProgress, listState.isScrollInProgress && !listState.canScrollBackward.not())
+        }.collect { (idx, scrolling, _) ->
+            if (idx == lastTick) return@collect
+            lastTick = idx
+            if (!scrolling) return@collect
+
+            val now = System.currentTimeMillis()
+            // 45ms 节流：快速滑动时不会连成一片，慢速拨动依然一格一响
+            if (now - lastVibrateAt >= 45L) {
+                lastVibrateAt = now
                 haptics?.wheel()
             }
         }
@@ -133,11 +140,7 @@ fun WheelColumn(
             contentPadding = PaddingValues(vertical = itemHeight * centerOffset)
         ) {
             items(items.size) { index ->
-                val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-                val center = listState.firstVisibleItemIndex + fractional
-                val distance = abs(index - center)
-                val centered = distance < 0.5f
-
+                // 字号/字重/颜色全部固定，滚动时只改 graphicsLayer，不触发重新测量
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -146,18 +149,23 @@ fun WheelColumn(
                 ) {
                     Text(
                         text = items[index],
-                        fontSize = if (centered) textSize.sp else (textSize * 0.78f).sp,
-                        fontWeight = if (centered) FontWeight.Bold else FontWeight.Medium,
-                        color = if (centered) activeColor else inactiveColor,
+                        fontSize = textSize.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = activeColor,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
-                        modifier = Modifier
-                            .graphicsLayer {
-                                val scale = if (centered) 1f else (1f - distance * 0.09f).coerceIn(0.66f, 1f)
-                                scaleX = scale
-                                scaleY = scale
-                            }
-                            .alpha(if (centered) 1f else (1f - distance * 0.30f).coerceIn(0.16f, 0.8f))
+                        modifier = Modifier.graphicsLayer {
+                            // 用 listState 计算与中央的距离（只在绘制阶段读取，开销极低）
+                            val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
+                            val center = listState.firstVisibleItemIndex + fractional
+                            val distance = abs(index - center)
+                            val centered = distance < 0.5f
+
+                            val scale = if (centered) 1f else (1f - distance * 0.09f).coerceIn(0.66f, 1f)
+                            scaleX = scale
+                            scaleY = scale
+                            alpha = if (centered) 1f else (1f - distance * 0.30f).coerceIn(0.16f, 0.8f)
+                        }
                     )
                 }
             }
