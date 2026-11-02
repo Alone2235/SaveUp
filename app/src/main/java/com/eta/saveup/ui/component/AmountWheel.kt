@@ -1,5 +1,10 @@
 package com.eta.saveup.ui.component
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -41,19 +47,17 @@ import com.eta.saveup.ui.theme.Fonts
 import com.eta.saveup.ui.theme.HyperBlue
 
 /**
- * 按数位分列的金额滚轮：万 / 千 / 百 / 十 / 元 / 角分。
+ * 金额录入。
  *
- * 每列只管一个数位（角分列管 0..99），拨动上限固定，
- * 设 8999 只需要拨 4 下，而不是从 0 拨到 8999。
- *
- * 顶部大字可直接点开系统键盘输入，大额一步到位。
+ * 布局遵循常识写法：`[万][千][百][十][元] . [角分]`
+ * 千/万默认折叠，点「展开高位」才出现，避免小数金额时六列挤成一排。
  */
 @Composable
 fun AmountWheel(
     amountCent: Long,
     onAmountChange: (Long) -> Unit,
     modifier: Modifier = Modifier,
-    maxCent: Long = 99_999_999L, // 最高 999,999.99
+    maxCent: Long = 99_999_999L,
     haptics: HapticsWrapper? = null,
     activeColor: Color = Color(0xFF1B1F27),
     inactiveColor: Color = Color(0xFFB6BCC8),
@@ -66,11 +70,13 @@ fun AmountWheel(
     val bai = (clamped / 10_000L % 10).toInt()
     val shi = (clamped / 1_000L % 10).toInt()
     val yuan = (clamped / 100L % 10).toInt()
-    val cents = (clamped % 100).toInt()
+    val jiao = (clamped / 10L % 10).toInt()
+    val fen = (clamped % 10L).toInt()
 
     val digitItems = remember { (0..9).map { it.toString() } }
-    val centItems = remember { (0..99).map { it.toString().padStart(2, '0') } }
 
+    // 有高位金额时自动展开，避免藏起来的数据看不见
+    var highExpanded by remember { mutableStateOf(clamped >= 10_000L) }
     var editing by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
@@ -86,7 +92,7 @@ fun AmountWheel(
         w * 1_000_000L + q * 100_000L + b * 10_000L + s * 1_000L + y * 100L + c
 
     Column(modifier.fillMaxWidth()) {
-        // 顶部金额条：点击进入键盘输入
+        // 顶部金额条
         Row(
             Modifier
                 .fillMaxWidth()
@@ -162,31 +168,66 @@ fun AmountWheel(
                 )
             }
         } else {
-            Spacer(Modifier.height(Dimens.gap4))
+            Spacer(Modifier.height(Dimens.gap12))
+
+            // 展开后列数变多，权重相应收窄
+            val cellWeight = if (highExpanded) 0.85f else 1.1f
+
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                DigitCell(wan, "万") { onAmountChange(rebuild(it, qian, bai, shi, yuan, cents)) }
-                DigitCell(qian, "千") { onAmountChange(rebuild(wan, it, bai, shi, yuan, cents)) }
-                DigitCell(bai, "百") { onAmountChange(rebuild(wan, qian, it, shi, yuan, cents)) }
-                DigitCell(shi, "十") { onAmountChange(rebuild(wan, qian, bai, it, yuan, cents)) }
-                DigitCell(yuan, "元") { onAmountChange(rebuild(wan, qian, bai, shi, it, cents)) }
-
-                Box(Modifier.weight(1.1f)) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        MiniWheel(
-                            items = centItems,
-                            selected = cents,
-                            onSelected = { onAmountChange(rebuild(wan, qian, bai, shi, yuan, it)) },
-                            haptics = haptics,
-                            activeColor = activeColor,
-                            inactiveColor = inactiveColor,
-                            textSize = 26
-                        )
-                        Text("角分", fontSize = 10.sp, color = labelColor)
+                // 万 / 千：默认折叠
+                AnimatedVisibility(
+                    visible = highExpanded,
+                    enter = expandHorizontally() + fadeIn(),
+                    exit = shrinkHorizontally() + fadeOut()
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        DigitCell(wan, "万", { onAmountChange(rebuild(it, qian, bai, shi, yuan, jiao * 10 + fen)) }, cellWeight)
+                        DigitCell(qian, "千", { onAmountChange(rebuild(wan, it, bai, shi, yuan, jiao * 10 + fen)) }, cellWeight)
+                        DigitCell(bai, "百", { onAmountChange(rebuild(wan, qian, it, shi, yuan, jiao * 10 + fen)) }, cellWeight)
                     }
+                }
+
+                DigitCell(shi, "十", { onAmountChange(rebuild(wan, qian, bai, it, yuan, jiao * 10 + fen)) }, cellWeight)
+                DigitCell(yuan, "元", { onAmountChange(rebuild(wan, qian, bai, shi, it, jiao * 10 + fen)) }, cellWeight)
+
+                // 小数点：元与角的视觉分隔
+                Text(
+                    text = ".",
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = activeColor,
+                    modifier = Modifier.padding(horizontal = 2.dp)
+                )
+
+                // 角
+                DigitCell(jiao, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, it * 10 + fen)) }, cellWeight, showLabel = false)
+                // 分
+                DigitCell(fen, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, jiao * 10 + it)) }, cellWeight, showLabel = false)
+            }
+
+            if (!highExpanded) {
+                Spacer(Modifier.height(Dimens.gap8))
+                Row(
+                    Modifier
+                        .clip(RoundedCornerShape(Dimens.pillRadius))
+                        .background(accent.copy(alpha = 0.08f))
+                        .clickable {
+                            haptics?.tick()
+                            highExpanded = true
+                        }
+                        .padding(horizontal = Dimens.gap12, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "展开千位 / 万位",
+                        fontSize = Fonts.micro,
+                        color = accent,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
@@ -197,42 +238,27 @@ fun AmountWheel(
 private fun RowScope.DigitCell(
     value: Int,
     label: String,
-    onValue: (Int) -> Unit
+    onValue: (Int) -> Unit,
+    weight: Float = 1f,
+    showLabel: Boolean = true
 ) {
-    Box(Modifier.weight(0.85f)) {
+    Box(Modifier.weight(weight)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            MiniWheel(
+            WheelColumn(
                 items = remember { (0..9).map { it.toString() } },
-                selected = value,
+                selectedIndex = value,
                 onSelected = onValue,
+                itemHeight = 44.dp,
+                visibleCount = 3,
                 textSize = 26
             )
-            Text(label, fontSize = 10.sp, color = Color(0xFF878D99))
+            if (showLabel) {
+                Text(label, fontSize = 10.sp, color = Color(0xFF878D99))
+            } else {
+                Spacer(Modifier.height(12.dp))
+            }
         }
     }
-}
-
-@Composable
-private fun MiniWheel(
-    items: List<String>,
-    selected: Int,
-    onSelected: (Int) -> Unit,
-    haptics: HapticsWrapper? = null,
-    activeColor: Color = Color(0xFF1B1F27),
-    inactiveColor: Color = Color(0xFFB6BCC8),
-    textSize: Int = 26
-) {
-    WheelColumn(
-        items = items,
-        selectedIndex = selected,
-        onSelected = onSelected,
-        itemHeight = 40.dp,
-        visibleCount = 3,
-        textSize = textSize,
-        activeColor = activeColor,
-        inactiveColor = inactiveColor,
-        haptics = haptics
-    )
 }
 
 private fun formatInput(cent: Long): String {

@@ -16,10 +16,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,9 +45,8 @@ import kotlin.math.roundToInt
 /**
  * 单列数字滚轮。
  *
- * 关键设计：拖动期间只写普通 Float 状态（同步、零协程），保证跟手；
- * 松手后才交给 [Animatable] + [exponentialDecay] 做原生惯性，最后 spring 吸附整行。
- * 惯性物理和 LazyColumn 的 fling 同源，所以手感一致。
+ * 位置是唯一状态，拖动同步写入；松手用原生指数衰减做惯性。
+ * 震动用 snapshotFlow 监听整行变化，快速滑动时也能逐个触发。
  */
 @Composable
 fun WheelColumn(
@@ -53,9 +54,9 @@ fun WheelColumn(
     selectedIndex: Int,
     onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
-    itemHeight: Dp = 52.dp,
-    visibleCount: Int = 5,
-    textSize: Int = 34,
+    itemHeight: Dp = 44.dp,
+    visibleCount: Int = 3,
+    textSize: Int = 28,
     activeColor: Color = Color(0xFF1B1F27),
     inactiveColor: Color = Color(0xFFB6BCC8),
     haptics: HapticsWrapper? = null
@@ -66,14 +67,12 @@ fun WheelColumn(
     val itemPx = with(density) { itemHeight.toPx() }
     val maxIndex = items.lastIndex
 
-    // 唯一的位置来源：行（浮点）
     var position by remember { mutableFloatStateOf(selectedIndex.coerceIn(0, maxIndex).toFloat()) }
-
     val scope = rememberCoroutineScope()
     val hap = rememberUpdatedState(haptics)
     val onSel = rememberUpdatedState(onSelected)
     val animJob = remember { arrayOfNulls<Job>(1) }
-    var lastTickIdx = selectedIndex
+    var lastTick by remember { mutableIntStateOf(selectedIndex) }
 
     // 外部值变化 → 归位
     LaunchedEffect(selectedIndex) {
@@ -86,11 +85,21 @@ fun WheelColumn(
         }
     }
 
+    // 跨整行 → 齿感震动（快滑时逐个触发）
+    LaunchedEffect(Unit) {
+        snapshotFlow { position.roundToInt() }.collect { idx ->
+            if (idx != lastTick) {
+                lastTick = idx
+                hap.value?.wheel()
+            }
+        }
+    }
+
     Box(
         modifier
             .fillMaxWidth()
             .height(itemHeight * visibleCount)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(10.dp))
             .pointerInput(maxIndex, itemPx) {
                 val tracker = VelocityTracker()
 
@@ -100,12 +109,11 @@ fun WheelColumn(
                         tracker.resetTracking()
                     },
                     onDragEnd = {
-                        val vY = tracker.calculateVelocity().y // px/s，向下为正
-                        val vLines = -vY / itemPx              // 行/秒，上滑为正
-
+                        val vY = tracker.calculateVelocity().y
+                        val vLines = -vY / itemPx
                         animJob[0] = scope.launch {
                             if (abs(vLines) > 40f) {
-                                position = decayTo(position, vLines, maxIndex)
+                                position = decayTo(position, vLines)
                             }
                             val target = position.roundToInt().coerceIn(0, maxIndex).toFloat()
                             animatePosition(position, target) { position = it }
@@ -122,7 +130,6 @@ fun WheelColumn(
                 ) { change, dragAmount ->
                     change.consume()
                     tracker.addPointerInputChange(change)
-                    // 手指上滑(dy<0) → 索引增大；同步写入状态，立刻重组
                     position = (position - dragAmount.y / itemPx)
                         .coerceIn(0f, maxIndex.toFloat())
                 }
@@ -133,9 +140,9 @@ fun WheelColumn(
                 .align(Alignment.Center)
                 .fillMaxWidth()
                 .height(itemHeight)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(RoundedCornerShape(10.dp))
                 .background(activeColor.copy(alpha = 0.05f))
-                .border(1.dp, activeColor.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
+                .border(1.dp, activeColor.copy(alpha = 0.10f), RoundedCornerShape(10.dp))
         )
 
         WheelContent(
@@ -147,40 +154,6 @@ fun WheelColumn(
             activeColor = activeColor,
             inactiveColor = inactiveColor
         )
-    }
-
-    // 每跨过一整行给一次齿感
-    LaunchedEffect(position) {
-        val idx = position.roundToInt()
-        if (idx != lastTickIdx) {
-            lastTickIdx = idx
-            hap.value?.wheel()
-        }
-    }
-}
-
-/** 用指数衰减跑惯性，返回最终位置 */
-private suspend fun decayTo(
-    from: Float,
-    velocityLinesPerSec: Float,
-    maxIndex: Int
-): Float {
-    val anim = Animatable(from)
-    // 先按衰减跑完，最后统一 clamp，避免动画作用域里取消引发 API 差异
-    anim.animateDecay(
-        initialVelocity = velocityLinesPerSec,
-        animationSpec = exponentialDecay(frictionMultiplier = 1.6f)
-    )
-    return anim.value.coerceIn(0f, maxIndex.toFloat())
-}
-
-private suspend fun animatePosition(from: Float, target: Float, set: (Float) -> Unit) {
-    val anim = Animatable(from)
-    anim.animateTo(
-        target,
-        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
-    ) {
-        set(value)
     }
 }
 
@@ -212,10 +185,10 @@ private fun WheelContent(
                     textAlign = TextAlign.Center,
                     maxLines = 1,
                     modifier = Modifier.graphicsLayer {
-                        val scale = if (centered) 1f else (1f - distance * 0.10f).coerceIn(0.6f, 1f)
+                        val scale = if (centered) 1f else (1f - distance * 0.08f).coerceIn(0.62f, 1f)
                         scaleX = scale
                         scaleY = scale
-                        alpha = if (centered) 1f else (1f - distance * 0.32f).coerceIn(0.10f, 0.8f)
+                        alpha = if (centered) 1f else (1f - distance * 0.28f).coerceIn(0.12f, 0.8f)
                     }
                 )
             }
@@ -235,5 +208,24 @@ private fun WheelContent(
                 p.place(x = 0, y = (elementCenter - p.height / 2f).roundToInt())
             }
         }
+    }
+}
+
+private suspend fun decayTo(from: Float, velocityLinesPerSec: Float): Float {
+    val anim = Animatable(from)
+    anim.animateDecay(
+        initialVelocity = velocityLinesPerSec,
+        animationSpec = exponentialDecay(frictionMultiplier = 1.6f)
+    )
+    return anim.value
+}
+
+private suspend fun animatePosition(from: Float, target: Float, set: (Float) -> Unit) {
+    val anim = Animatable(from)
+    anim.animateTo(
+        target,
+        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
+    ) {
+        set(value)
     }
 }

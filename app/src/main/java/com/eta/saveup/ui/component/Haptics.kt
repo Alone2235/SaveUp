@@ -8,7 +8,10 @@ import androidx.compose.ui.platform.LocalView
 /** 触感反馈封装：轻点 / 成功 / 警告 */
 object Haptics {
     fun tick(view: View?) {
-        view?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+        view?.performHapticFeedback(
+            HapticFeedbackConstants.KEYBOARD_TAP,
+            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
     }
 
     fun success(view: View?) {
@@ -19,9 +22,12 @@ object Haptics {
         view?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
     }
 
-    /** 滚轮齿感，比 KEYBOARD_TAP 更细 */
+    /** 滚轮齿感：用 KEYBOARD_TAP，兼容性最好 */
     fun wheel(view: View?) {
-        view?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+        view?.performHapticFeedback(
+            HapticFeedbackConstants.KEYBOARD_TAP,
+            HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
     }
 }
 
