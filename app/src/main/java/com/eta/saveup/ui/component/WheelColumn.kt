@@ -166,15 +166,11 @@ private suspend fun decayTo(
     maxIndex: Int
 ): Float {
     val anim = Animatable(from)
+    // 先按衰减跑完，最后统一 clamp，避免动画作用域里取消引发 API 差异
     anim.animateDecay(
         initialVelocity = velocityLinesPerSec,
         animationSpec = exponentialDecay(frictionMultiplier = 1.6f)
-    ) {
-        if (value < 0f || value > maxIndex) {
-            // 撞到边界直接停
-            cancel()
-        }
-    }
+    )
     return anim.value.coerceIn(0f, maxIndex.toFloat())
 }
 
