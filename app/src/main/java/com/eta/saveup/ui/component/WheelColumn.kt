@@ -172,7 +172,7 @@ private suspend fun decayTo(
     ) {
         if (value < 0f || value > maxIndex) {
             // 撞到边界直接停
-            this.cancelAnimation()
+            cancel()
         }
     }
     return anim.value.coerceIn(0f, maxIndex.toFloat())
