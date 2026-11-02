@@ -97,6 +97,14 @@ fun AmountWheel(
         onAmountChange(currentValue())
     }
 
+    /** 用显式参数拼装金额并上报，避免读到同帧旧快照 */
+    fun emit(w: Int, q: Int, b: Int, s2: Int, y: Int, jj: Int, f: Int) {
+        val cent = w * 1_000_000L + q * 100_000L + b * 10_000L +
+            s2 * 1_000L + y * 100L + jj * 10L + f
+        lastSeen = cent
+        onAmountChange(cent)
+    }
+
     /** 外部设定整个金额（键盘输入）：重算所有位并重建滚轮 */
     fun applyExternal(cent: Long) {
         val c = cent.coerceIn(0L, maxCent)
@@ -219,23 +227,23 @@ fun AmountWheel(
                     exit = shrinkHorizontally() + fadeOut()
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        DigitCell(wan, "万", cellWeight, rev, haptics) {
-                            wan = it; push()
+                        DigitCell(wan, "万", cellWeight, rev, haptics) { v ->
+                            wan = v; emit(v, qian, bai, shi, yuan, jiao, fen)
                         }
-                        DigitCell(qian, "千", cellWeight, rev, haptics) {
-                            qian = it; push()
+                        DigitCell(qian, "千", cellWeight, rev, haptics) { v ->
+                            qian = v; emit(wan, v, bai, shi, yuan, jiao, fen)
                         }
-                        DigitCell(bai, "百", cellWeight, rev, haptics) {
-                            bai = it; push()
+                        DigitCell(bai, "百", cellWeight, rev, haptics) { v ->
+                            bai = v; emit(wan, qian, v, shi, yuan, jiao, fen)
                         }
                     }
                 }
 
-                DigitCell(shi, "十", cellWeight, rev, haptics) {
-                    shi = it; push()
+                DigitCell(shi, "十", cellWeight, rev, haptics) { v ->
+                    shi = v; emit(wan, qian, bai, v, yuan, jiao, fen)
                 }
-                DigitCell(yuan, "元", cellWeight, rev, haptics) {
-                    yuan = it; push()
+                DigitCell(yuan, "元", cellWeight, rev, haptics) { v ->
+                    yuan = v; emit(wan, qian, bai, shi, v, jiao, fen)
                 }
 
                 Text(
@@ -246,11 +254,11 @@ fun AmountWheel(
                     modifier = Modifier.padding(horizontal = 2.dp)
                 )
 
-                DigitCell(jiao, "", cellWeight, rev, haptics, showLabel = false) {
-                    jiao = it; push()
+                DigitCell(jiao, "", cellWeight, rev, haptics, showLabel = false) { v ->
+                    jiao = v; emit(wan, qian, bai, shi, yuan, v, fen)
                 }
-                DigitCell(fen, "", cellWeight, rev, haptics, showLabel = false) {
-                    fen = it; push()
+                DigitCell(fen, "", cellWeight, rev, haptics, showLabel = false) { v ->
+                    fen = v; emit(wan, qian, bai, shi, yuan, jiao, v)
                 }
             }
 
