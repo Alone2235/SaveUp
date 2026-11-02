@@ -1,17 +1,14 @@
 package com.eta.saveup.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,8 +27,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.RemoveCircleOutline
+import androidx.compose.material.icons.rounded.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -50,21 +46,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eta.saveup.data.db.Goal
-import com.eta.saveup.data.repo.GoalView
 import com.eta.saveup.ui.component.pressScale
 import com.eta.saveup.ui.component.rememberHaptics
 import com.eta.saveup.ui.component.rememberInteraction
-import com.eta.saveup.ui.screen.DepositSheet
+import com.eta.saveup.ui.screen.DecideSheet
 import com.eta.saveup.ui.screen.GoalDetailScreen
 import com.eta.saveup.ui.screen.GoalEditSheet
 import com.eta.saveup.ui.screen.HomeScreen
 import com.eta.saveup.ui.screen.SettingsScreen
 import com.eta.saveup.ui.theme.AppBackground
-import com.eta.saveup.ui.theme.Dimens
 import com.eta.saveup.ui.theme.Fonts
 import com.eta.saveup.ui.theme.HyperBlue
 import com.eta.saveup.ui.theme.IosWhite
-import com.eta.saveup.ui.theme.SuccessGreen
+import com.eta.saveup.ui.theme.Radius
+import com.eta.saveup.ui.theme.Space
 
 private sealed interface Route {
     data object Home : Route
@@ -72,7 +67,6 @@ private sealed interface Route {
     data object Settings : Route
 }
 
-/** 用于决定转场方向：列表页 0，二级页 1 */
 private fun Route.depth(): Int = when (this) {
     is Route.Home -> 0
     else -> 1
@@ -84,17 +78,19 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
     val haptics = rememberHaptics(state.haptics)
 
     var route by remember { mutableStateOf<Route>(Route.Home) }
-    var showDeposit by remember { mutableStateOf(false) }
-    var showSpend by remember { mutableStateOf(false) }
+    var showDecide by remember { mutableStateOf(false) }
     var editGoal by remember { mutableStateOf<Goal?>(null) }
     var showNewGoal by remember { mutableStateOf(false) }
     var confirmDeleteGoal by remember { mutableStateOf<Goal?>(null) }
-    var deleteDepositId by remember { mutableStateOf<Long?>(null) }
 
     val sheetGoals = state.activeGoals + state.doneGoals
 
     AppBackground {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+        ) {
             Box(Modifier.weight(1f)) {
                 AnimatedContent(
                     targetState = route,
@@ -132,35 +128,34 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
                             haptics = haptics,
                             onGoalClick = { gv -> route = Route.Detail(gv.goal.id) },
                             onNewGoal = { showNewGoal = true },
-                            onSettings = { route = Route.Settings }
+                            onSettings = { route = Route.Settings },
+                            onSettle = { vm.settleAll() }
                         )
 
                         is Route.Settings -> SettingsScreen(
                             state = state,
                             haptics = haptics,
                             onBack = { route = Route.Home },
-                            onDailyGoalChange = vm::setDailyGoal,
                             onHapticsChange = vm::setHaptics
                         )
 
                         is Route.Detail -> {
                             val gv = state.goals.firstOrNull { it.goal.id == r.goalId }
-                            val deposits = state.deposits.filter { it.goalId == r.goalId }
                             if (gv == null) {
                                 route = Route.Home
                             } else {
                                 GoalDetailScreen(
                                     goal = gv.goal,
                                     savedCent = gv.savedCent,
-                                    deposits = deposits,
+                                    entries = state.entries.filter { it.goalId == r.goalId },
                                     haptics = haptics,
                                     onBack = { route = Route.Home },
                                     onEdit = { editGoal = gv.goal },
                                     onDelete = { confirmDeleteGoal = gv.goal },
                                     onArchive = { vm.archiveGoal(gv.goal) },
                                     onRestore = { vm.restoreGoal(gv.goal) },
-                                    onAddDeposit = { showDeposit = true },
-                                    onDeleteDeposit = { id -> deleteDepositId = id }
+                                    onDecide = { showDecide = true },
+                                    onDeleteEntry = { vm.deleteEntry(it) }
                                 )
                             }
                         }
@@ -169,45 +164,30 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
             }
 
             if (route == Route.Home) {
-                BottomBar(
-                    streak = state.streak,
-                    haptics = haptics,
-                    onKeep = { showDeposit = true },
-                    onSpend = { showSpend = true }
-                )
+                DecideBar(haptics) { showDecide = true }
             }
         }
     }
 
-    // ---- 弹层 ----
-    if (showDeposit) {
-        DepositSheet(
+    // ---- 决定页 ----
+    if (showDecide) {
+        DecideSheet(
             goals = sheetGoals,
             haptics = haptics,
             initialGoalId = (route as? Route.Detail)?.goalId,
-            spendMode = false,
-            onDismiss = { showDeposit = false },
-            onConfirm = { gid, cent ->
-                vm.addDeposit(gid, cent)
-                showDeposit = false
+            onDismiss = { showDecide = false },
+            onKeep = { gid, cent, title ->
+                vm.recordKept(gid, cent, title)
+                showDecide = false
+            },
+            onBuy = { gid, cent, title ->
+                vm.recordBought(gid, cent, title)
+                showDecide = false
             }
         )
     }
 
-    if (showSpend) {
-        DepositSheet(
-            goals = sheetGoals,
-            haptics = haptics,
-            initialGoalId = (route as? Route.Detail)?.goalId,
-            spendMode = true,
-            onDismiss = { showSpend = false },
-            onConfirm = { gid, cent ->
-                vm.addSpent(gid, cent)
-                showSpend = false
-            }
-        )
-    }
-
+    // ---- 目标编辑 ----
     if (showNewGoal || editGoal != null) {
         GoalEditSheet(
             existing = editGoal,
@@ -219,7 +199,7 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
             onSave = { title, emoji, cent, cover, mode ->
                 val ex = editGoal
                 if (ex == null) {
-                    vm.createGoal(title, emoji, cent, null, cover, mode)
+                    vm.createGoal(title, emoji, cent, cover, mode)
                 } else {
                     vm.updateGoal(
                         ex.copy(
@@ -254,92 +234,47 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
             }
         )
     }
-
-    deleteDepositId?.let { id ->
-        AlertDialog(
-            onDismissRequest = { deleteDepositId = null },
-            title = { Text("删除这条记录？") },
-            text = { Text("对应金额会从统计里扣回去。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.deleteDeposit(id)
-                    deleteDepositId = null
-                }) { Text("删除", color = Color(0xFFFF6B6B)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteDepositId = null }) { Text("取消") }
-            }
-        )
-    }
 }
 
+/** 底部唯一入口：想买点什么 */
 @Composable
-private fun BottomBar(
-    streak: Int,
-    haptics: com.eta.saveup.ui.component.HapticsWrapper,
-    onKeep: () -> Unit,
-    onSpend: () -> Unit
-) {
+private fun DecideBar(haptics: com.eta.saveup.ui.component.HapticsWrapper, onClick: () -> Unit) {
+    val interaction = rememberInteraction()
     Row(
         Modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = Dimens.pagePadding, vertical = Dimens.gap12),
-        horizontalArrangement = Arrangement.spacedBy(Dimens.gap12),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = Space.page, vertical = Space.sm)
     ) {
-        // 主按钮：我忍住了
-        val keepInteraction = rememberInteraction()
         Row(
             Modifier
                 .weight(1f)
-                .height(Dimens.buttonLarge)
-                .pressScale(keepInteraction, pressedScale = 0.96f)
-                .clip(RoundedCornerShape(Dimens.pillRadius))
-                .background(SuccessGreen)
+                .height(56.dp)
+                .pressScale(interaction, 0.97f)
+                .clip(RoundedCornerShape(Radius.pill))
+                .background(HyperBlue)
                 .clickable(
-                    interactionSource = keepInteraction,
+                    interactionSource = interaction,
                     indication = null
                 ) {
                     haptics.tick()
-                    onKeep()
-                }
-                .padding(horizontal = Dimens.gap24),
+                    onClick()
+                },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
             Icon(
-                Icons.Rounded.Add,
+                Icons.Rounded.ShoppingCart,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(22.dp)
+                modifier = Modifier.size(20.dp)
             )
-            Spacer(Modifier.width(Dimens.gap6))
+            Spacer(Modifier.width(Space.xs))
             Text(
-                text = "我忍住了",
+                text = "想买点什么",
                 fontSize = Fonts.bodyStrong,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White
-            )
-        }
-
-        // 次按钮：破戒了
-        Box(
-            Modifier
-                .size(Dimens.buttonLarge)
-                .clip(RoundedCornerShape(Dimens.pillRadius))
-                .background(Color.White)
-                .clickable {
-                    haptics.warn()
-                    onSpend()
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Rounded.RemoveCircleOutline,
-                contentDescription = "记一笔花销",
-                tint = IosWhite.copy(alpha = 0.42f),
-                modifier = Modifier.size(24.dp)
             )
         }
     }

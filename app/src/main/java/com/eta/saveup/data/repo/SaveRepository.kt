@@ -2,9 +2,10 @@ package com.eta.saveup.data.repo
 
 import com.eta.saveup.data.db.AppDatabase
 import com.eta.saveup.data.db.DailyStat
-import com.eta.saveup.data.db.Deposit
+import com.eta.saveup.data.db.Entry
 import com.eta.saveup.data.db.Goal
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import java.util.Calendar
 
@@ -21,38 +22,45 @@ data class GoalView(
     val achieved: Boolean get() = savedCent >= goal.targetCent
 }
 
+/**
+ * 仓库层。
+ *
+ * 核心原则：**entries 是唯一真相**。所有统计都从 entries 现算，
+ * 不再维护任何累加计数器。
+ */
 class SaveRepository(private val db: AppDatabase) {
 
     private val goalDao = db.goalDao()
-    private val depositDao = db.depositDao()
+    private val entryDao = db.entryDao()
 
     val goals: Flow<List<Goal>> = goalDao.observeAll()
-    val allDeposits: Flow<List<Deposit>> = depositDao.observeAll()
-    val totalSaved: Flow<Long> = depositDao.observeTotalSaved().map { it ?: 0L }
-    val inboxCount: Flow<Int> = depositDao.observeInboxCount()
-    /** 90 天每日统计：以流水实时聚合为准，不读累加计数器 */
-    val recentDaily: Flow<List<DailyStat>> =
-        depositDao.observeDailyStats(System.currentTimeMillis() - 90L * 24 * 3600 * 1000)
+    val allEntries: Flow<List<Entry>> = entryDao.observeAll()
+    val totalSettled: Flow<Long> = entryDao.observeTotalSettled().map { it ?: 0L }
+    val pendingSum: Flow<Long> = entryDao.observePendingSum().map { it ?: 0L }
+    val pendingCount: Flow<Int> = entryDao.observePendingCount()
 
+    /** 最近 90 天每日汇总，直接从 entries 聚合 */
+    val recentDaily: Flow<List<DailyStat>> =
+        entryDao.observeDailyStats(System.currentTimeMillis() - 90L * 24 * 3600 * 1000)
+
+    /** 目标 + 已锁定金额 */
     fun goalViews(): Flow<List<GoalView>> =
-        kotlinx.coroutines.flow.combine(goals, depositDao.observeSumsByGoal()) { goals, sums ->
+        combine(goals, entryDao.observeSettledByGoal()) { goals, sums ->
             val map = sums.associate { it.goalId to it.sum }
             goals.map { GoalView(it, map[it.id] ?: 0L) }
         }
 
-    fun depositsOf(goalId: Long): Flow<List<Deposit>> = depositDao.observeByGoal(goalId)
+    fun entriesOf(goalId: Long): Flow<List<Entry>> = entryDao.observeByGoal(goalId)
 
-    // ---- 写操作 ----
+    // ---- 目标 ----
 
     suspend fun createGoal(goal: Goal): Long = goalDao.insert(goal)
 
     suspend fun updateGoal(goal: Goal) = goalDao.update(goal)
 
     suspend fun deleteGoal(id: Long) {
-        // 目标删掉后，其流水退回收件箱，不丢数据
-        depositDao.getByGoal(id).forEach {
-            depositDao.update(it.copy(goalId = null))
-        }
+        // 目标删掉后，其记录退回未分配，不丢数据
+        entryDao.detachFromGoal(id)
         goalDao.delete(id)
     }
 
@@ -62,76 +70,101 @@ class SaveRepository(private val db: AppDatabase) {
     suspend fun restoreGoal(goal: Goal) =
         goalDao.update(goal.copy(status = Goal.ACTIVE))
 
+    // ---- 决定 ----
+
     /**
-     * 记一笔攒钱。会同步更新当日统计用于 streak。
+     * 记下一个决定。
+     *
+     * @param kept true = 留着（计入攒钱），false = 买了（不计入）
+     * @param settled 这笔钱是否已经真的转走；默认未落地
      */
-    suspend fun addDeposit(goalId: Long?, amountCent: Long, note: String = "") {
+    suspend fun recordDecision(
+        goalId: Long?,
+        amountCent: Long,
+        title: String,
+        kept: Boolean,
+        settled: Boolean = false
+    ) {
         if (amountCent <= 0) return
-        depositDao.insert(
-            Deposit(goalId = goalId, amountCent = amountCent, note = note.trim())
+
+        entryDao.insert(
+            Entry(
+                goalId = goalId,
+                amountCent = amountCent,
+                title = title.trim(),
+                decision = if (kept) Entry.KEPT else Entry.BOUGHT,
+                settleState = if (settled) Entry.SETTLED else Entry.UNSETTLED
+            )
         )
-        // 目标状态重算（攒满自动完成，多退少补都靠这一处）
-        goalId?.let { gid -> refreshGoalStatus(gid) }
+        goalId?.let { refreshGoalStatus(it) }
     }
 
-    /** 破戒了：记一笔花销，从目标里扣 */
-    suspend fun addSpent(goalId: Long?, amountCent: Long, note: String = "") {
-        if (amountCent <= 0) return
-        depositDao.insert(
-            Deposit(goalId = goalId, amountCent = amountCent, note = note.trim(), status = Deposit.SPENT)
-        )
+    /** 标记若干笔记录为「已转入」 */
+    suspend fun settleEntries(ids: List<Long>) {
+        ids.forEach { id ->
+            val e = entryDao.get(id) ?: return@forEach
+            if (e.decision == Entry.KEPT && e.settleState == Entry.UNSETTLED) {
+                entryDao.update(e.copy(settleState = Entry.SETTLED))
+            }
+        }
+        // 目标状态可能因此变化
+        goalDao.getAll().forEach { refreshGoalStatus(it.id) }
     }
 
-    suspend fun deleteDeposit(id: Long) {
-        val d = depositDao.get(id) ?: return
-        depositDao.delete(id)
-
-        // 统计由流水实时聚合，删掉流水即自动回滚，无需手动维护计数器
-
-        // 目标状态无条件重算：删掉任何一笔都可能让它不再达标
-        d.goalId?.let { gid -> refreshGoalStatus(gid) }
+    /** 把所有未落地的保留记录一次性标记为已转入 */
+    suspend fun settleAllPending() {
+        val ids = entryDao.pendingKeptIds()
+        ids.forEach { id ->
+            val e = entryDao.get(id) ?: return@forEach
+            entryDao.update(e.copy(settleState = Entry.SETTLED))
+        }
+        // 目标状态可能因此变化
+        goalDao.getAll().forEach { refreshGoalStatus(it.id) }
     }
+
+    suspend fun deleteEntry(id: Long) {
+        val e = entryDao.get(id) ?: return
+        entryDao.delete(id)
+        e.goalId?.let { refreshGoalStatus(it) }
+    }
+
+    suspend fun updateEntry(entry: Entry) = entryDao.update(entry)
 
     /**
-     * 按当前流水重算目标完成状态。
-     * 增、删、改金额后都要调，避免状态与实际金额脱节。
+     * 按当前记录重算目标完成状态。
+     * 只统计「保留 + 已锁定」的钱。
      */
     suspend fun refreshGoalStatus(goalId: Long) {
         val goal = goalDao.get(goalId) ?: return
         if (goal.status == Goal.ARCHIVED) return
 
-        val sum = depositDao.getByGoal(goalId)
-            .filter { it.status == Deposit.SAVED }
+        val sum = entryDao.getByGoal(goalId)
+            .filter { it.decision == Entry.KEPT && it.settleState == Entry.SETTLED }
             .sumOf { it.amountCent }
 
-        val shouldBeDone = sum >= goal.targetCent
-        val newStatus = if (shouldBeDone) Goal.DONE else Goal.ACTIVE
+        val newStatus = if (sum >= goal.targetCent) Goal.DONE else Goal.ACTIVE
         if (goal.status != newStatus) {
             goalDao.update(goal.copy(status = newStatus))
         }
     }
 
-    suspend fun moveDeposit(id: Long, goalId: Long?) {
-        val d = depositDao.get(id) ?: return
-        depositDao.update(d.copy(goalId = goalId))
-    }
-
     companion object {
         fun todayKey(): Int {
             val c = Calendar.getInstance()
-            return c.get(Calendar.YEAR) * 10000 + (c.get(Calendar.MONTH) + 1) * 100 + c.get(Calendar.DAY_OF_MONTH)
+            return c.get(Calendar.YEAR) * 10000 +
+                (c.get(Calendar.MONTH) + 1) * 100 + c.get(Calendar.DAY_OF_MONTH)
         }
 
         fun dayKey(millis: Long): Int {
             val c = Calendar.getInstance().apply { timeInMillis = millis }
-            return c.get(Calendar.YEAR) * 10000 + (c.get(Calendar.MONTH) + 1) * 100 + c.get(Calendar.DAY_OF_MONTH)
+            return c.get(Calendar.YEAR) * 10000 +
+                (c.get(Calendar.MONTH) + 1) * 100 + c.get(Calendar.DAY_OF_MONTH)
         }
 
-        /** 连续有攒钱记录的天数（今天没记但昨天记了也算，断一天就归零） */
+        /** 连续有「保留」记录的天数；今天没记就从昨天算，断一天归零 */
         fun streak(daily: List<DailyStat>, today: Int = todayKey()): Int {
             val map = daily.associateBy { it.day }
             var cursor = today
-            // 今天还没攒，从昨天开始算，避免早上一看 streak 就断
             if (map[cursor]?.savedCount?.let { it > 0 } != true) {
                 cursor = prevDay(cursor)
                 if (map[cursor]?.savedCount?.let { it > 0 } != true) return 0
@@ -139,7 +172,7 @@ class SaveRepository(private val db: AppDatabase) {
             var n = 0
             while (true) {
                 val s = map[cursor] ?: break
-                if ((s.savedCount) <= 0) break
+                if (s.savedCount <= 0) break
                 n++
                 cursor = prevDay(cursor)
             }
@@ -153,7 +186,8 @@ class SaveRepository(private val db: AppDatabase) {
                 set(Calendar.DAY_OF_MONTH, day % 100)
                 add(Calendar.DAY_OF_MONTH, -1)
             }
-            return c.get(Calendar.YEAR) * 10000 + (c.get(Calendar.MONTH) + 1) * 100 + c.get(Calendar.DAY_OF_MONTH)
+            return c.get(Calendar.YEAR) * 10000 +
+                (c.get(Calendar.MONTH) + 1) * 100 + c.get(Calendar.DAY_OF_MONTH)
         }
     }
 }

@@ -30,40 +30,44 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.eta.saveup.ui.UiState
-import com.eta.saveup.ui.component.AmountWheel
 import com.eta.saveup.ui.component.HapticsWrapper
 import com.eta.saveup.ui.component.SectionTitle
+import com.eta.saveup.ui.component.SurfaceCard
+import com.eta.saveup.ui.component.formatYuan
 import com.eta.saveup.ui.component.formatYuanInt
-import com.eta.saveup.ui.theme.Dimens
 import com.eta.saveup.ui.theme.Fonts
+import com.eta.saveup.ui.theme.GoldAccent
 import com.eta.saveup.ui.theme.HyperBlue
 import com.eta.saveup.ui.theme.IosWhite
+import com.eta.saveup.ui.theme.Radius
+import com.eta.saveup.ui.theme.Space
 import com.eta.saveup.ui.theme.SuccessGreen
+import com.eta.saveup.ui.theme.TextAlpha
+import com.eta.saveup.ui.theme.WarnOrange
 
 @Composable
 fun SettingsScreen(
     state: UiState,
     haptics: HapticsWrapper,
     onBack: () -> Unit,
-    onDailyGoalChange: (Long) -> Unit,
     onHapticsChange: (Boolean) -> Unit
 ) {
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
-            start = Dimens.pagePadding,
-            end = Dimens.pagePadding,
-            top = Dimens.gap16,
+            start = Space.page,
+            end = Space.page,
+            top = Space.md,
             bottom = 120.dp
         ),
-        verticalArrangement = Arrangement.spacedBy(Dimens.gap12)
+        verticalArrangement = Arrangement.spacedBy(Space.gap)
     ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
-                        .size(Dimens.touchTarget)
-                        .clip(RoundedCornerShape(Dimens.controlRadius))
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(Radius.small))
                         .background(Color.White)
                         .clickable { haptics.tick(); onBack() },
                     contentAlignment = Alignment.Center
@@ -75,7 +79,7 @@ fun SettingsScreen(
                         modifier = Modifier.size(20.dp)
                     )
                 }
-                Spacer(Modifier.width(Dimens.gap12))
+                Spacer(Modifier.width(Space.sm))
                 Text(
                     text = "设置",
                     fontSize = Fonts.title1,
@@ -85,102 +89,84 @@ fun SettingsScreen(
             }
         }
 
-        item { SectionTitle("数据总览") }
+        item { SectionTitle("总览") }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(Dimens.gap12)) {
-                InfoTile("累计攒下", formatYuanInt(state.totalSavedCent), SuccessGreen, Modifier.weight(1f))
-                InfoTile("连续天数", "${state.streak} 天", HyperBlue, Modifier.weight(1f))
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
+                InfoTile("已锁定", formatYuanInt(state.totalSettledCent), SuccessGreen, Modifier.weight(1f))
+                InfoTile("待转入", formatYuanInt(state.pendingSumCent), WarnOrange, Modifier.weight(1f))
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(Dimens.gap12)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
                 InfoTile("进行中", "${state.activeGoals.size}", IosWhite, Modifier.weight(1f))
-                InfoTile("已达成", "${state.doneGoals.size}", Color(0xFFFFC24B), Modifier.weight(1f))
+                InfoTile("已达成", "${state.doneGoals.size}", GoldAccent, Modifier.weight(1f))
             }
         }
-
-        item { SectionTitle("每日目标") }
         item {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Dimens.cardRadius))
-                    .background(Color.White)
-                    .padding(Dimens.cardPadding)
-            ) {
-                Text(
-                    text = if (state.dailyGoalCent > 0)
-                        "现在设定：" + formatYuanInt(state.dailyGoalCent) + " / 天"
-                    else "未设定，设为 0 则不显示",
-                    fontSize = Fonts.caption,
-                    color = IosWhite.copy(alpha = 0.62f),
-                    modifier = Modifier.padding(bottom = Dimens.gap8)
-                )
-                AmountWheel(
-                    amountCent = state.dailyGoalCent,
-                    onAmountChange = onDailyGoalChange,
-                    maxCent = 99_999_999L,
-                    haptics = haptics,
-                    accent = HyperBlue
-                )
+            SurfaceCard {
+                Column {
+                    Text(
+                        text = "关于「待转入」",
+                        fontSize = Fonts.caption,
+                        fontWeight = FontWeight.Medium,
+                        color = IosWhite.copy(alpha = TextAlpha.secondary)
+                    )
+                    Spacer(Modifier.height(Space.xxs))
+                    Text(
+                        text = "「留着」只是记了个决定，钱还在你手上。" +
+                            "真的把钱转到一个不好取的地方之后，回到 App 点「已转入」，" +
+                            "这笔才计入目标。没转走的不算数。",
+                        fontSize = Fonts.micro,
+                        color = IosWhite.copy(alpha = TextAlpha.tertiary)
+                    )
+                }
             }
         }
 
         item { SectionTitle("偏好") }
         item {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Dimens.cardRadius))
-                    .background(Color.White)
-                    .padding(horizontal = Dimens.itemPadH, vertical = Dimens.gap12),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "震动反馈",
-                        fontSize = Fonts.body,
-                        fontWeight = FontWeight.Medium,
-                        color = IosWhite
-                    )
-                    Text(
-                        text = "拨轮和按钮的触感",
-                        fontSize = Fonts.micro,
-                        color = IosWhite.copy(alpha = 0.38f)
+            SurfaceCard(padding = PaddingValues(Space.md)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "震动反馈",
+                            fontSize = Fonts.body,
+                            fontWeight = FontWeight.Medium,
+                            color = IosWhite
+                        )
+                        Text(
+                            text = "按钮和滚轮的触感",
+                            fontSize = Fonts.micro,
+                            color = IosWhite.copy(alpha = TextAlpha.tertiary)
+                        )
+                    }
+                    Switch(
+                        checked = state.haptics,
+                        onCheckedChange = {
+                            haptics.tick()
+                            onHapticsChange(it)
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = HyperBlue,
+                            uncheckedThumbColor = Color.White,
+                            uncheckedTrackColor = Color(0xFFD5DBE5)
+                        )
                     )
                 }
-                Switch(
-                    checked = state.haptics,
-                    onCheckedChange = {
-                        haptics.tick()
-                        onHapticsChange(it)
-                    },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = HyperBlue,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = Color(0xFFD5DBE5)
-                    )
-                )
             }
         }
 
         item {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(Dimens.cardRadius))
-                    .background(Color.White)
-                    .padding(Dimens.cardPadding)
-            ) {
+            SurfaceCard {
                 Column {
                     Text(
                         text = "关于",
                         fontSize = Fonts.caption,
                         fontWeight = FontWeight.Medium,
-                        color = IosWhite.copy(alpha = 0.42f)
+                        color = IosWhite.copy(alpha = TextAlpha.secondary)
                     )
-                    Spacer(Modifier.height(Dimens.gap4))
+                    Spacer(Modifier.height(Space.xxs))
                     Text(
                         text = "SaveUp · 攒钱目标管理",
                         fontSize = Fonts.caption,
@@ -189,7 +175,7 @@ fun SettingsScreen(
                     Text(
                         text = "所有数据只存在这台手机上，不联网、不上传。",
                         fontSize = Fonts.micro,
-                        color = IosWhite.copy(alpha = 0.38f)
+                        color = IosWhite.copy(alpha = TextAlpha.tertiary)
                     )
                 }
             }
@@ -201,9 +187,9 @@ fun SettingsScreen(
 private fun InfoTile(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
     Column(
         modifier
-            .clip(RoundedCornerShape(Dimens.cardRadius))
+            .clip(RoundedCornerShape(Radius.medium))
             .background(Color.White)
-            .padding(Dimens.cardPadding)
+            .padding(Space.md)
     ) {
         Text(
             text = value,
@@ -215,7 +201,7 @@ private fun InfoTile(label: String, value: String, color: Color, modifier: Modif
         Text(
             text = label,
             fontSize = Fonts.micro,
-            color = IosWhite.copy(alpha = 0.38f)
+            color = IosWhite.copy(alpha = TextAlpha.tertiary)
         )
     }
 }

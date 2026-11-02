@@ -5,7 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.eta.saveup.data.db.AppDatabase
 import com.eta.saveup.data.db.DailyStat
-import com.eta.saveup.data.db.Deposit
+import com.eta.saveup.data.db.Entry
 import com.eta.saveup.data.db.Goal
 import com.eta.saveup.data.prefs.AppPrefs
 import com.eta.saveup.data.repo.GoalView
@@ -17,12 +17,12 @@ import kotlinx.coroutines.launch
 
 data class UiState(
     val goals: List<GoalView> = emptyList(),
-    val deposits: List<Deposit> = emptyList(),
-    val totalSavedCent: Long = 0,
-    val inboxCount: Int = 0,
+    val entries: List<Entry> = emptyList(),
+    val totalSettledCent: Long = 0,
+    val pendingSumCent: Long = 0,
+    val pendingCount: Int = 0,
     val streak: Int = 0,
-    val todaySavedCent: Long = 0,
-    val dailyGoalCent: Long = 0,
+    val todayKeptCent: Long = 0,
     val haptics: Boolean = true
 ) {
     val activeGoals: List<GoalView> get() = goals.filter { it.goal.status == Goal.ACTIVE }
@@ -39,55 +39,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(UiState())
     val ui: StateFlow<UiState> = _ui.asStateFlow()
 
-    private val _recentDaily = MutableStateFlow<List<DailyStat>>(emptyList())
-
     init {
         viewModelScope.launch {
-            repo.goalViews().collect { goals ->
-                _ui.value = _ui.value.copy(goals = goals)
-            }
+            repo.goalViews().collect { g -> _ui.value = _ui.value.copy(goals = g) }
         }
         viewModelScope.launch {
-            repo.allDeposits.collect { d -> _ui.value = _ui.value.copy(deposits = d) }
+            repo.allEntries.collect { e -> _ui.value = _ui.value.copy(entries = e) }
         }
         viewModelScope.launch {
-            repo.totalSaved.collect { s -> _ui.value = _ui.value.copy(totalSavedCent = s) }
+            repo.totalSettled.collect { s -> _ui.value = _ui.value.copy(totalSettledCent = s) }
         }
         viewModelScope.launch {
-            repo.inboxCount.collect { c -> _ui.value = _ui.value.copy(inboxCount = c) }
+            repo.pendingSum.collect { s -> _ui.value = _ui.value.copy(pendingSumCent = s) }
+        }
+        viewModelScope.launch {
+            repo.pendingCount.collect { c -> _ui.value = _ui.value.copy(pendingCount = c) }
         }
         viewModelScope.launch {
             repo.recentDaily.collect { list ->
                 val today = SaveRepository.todayKey()
                 _ui.value = _ui.value.copy(
                     streak = SaveRepository.streak(list, today),
-                    todaySavedCent = list.firstOrNull { it.day == today }?.savedCent ?: 0L
+                    todayKeptCent = list.firstOrNull { it.day == today }?.savedCent ?: 0L
                 )
             }
-        }
-        viewModelScope.launch {
-            prefs.dailyGoalCent.collect { g -> _ui.value = _ui.value.copy(dailyGoalCent = g) }
         }
         viewModelScope.launch {
             prefs.hapticsEnabled.collect { h -> _ui.value = _ui.value.copy(haptics = h) }
         }
     }
 
-    fun addDeposit(goalId: Long?, amountCent: Long, note: String = "") =
-        viewModelScope.launch { repo.addDeposit(goalId, amountCent, note) }
+    // ---- 决定 ----
 
-    fun addSpent(goalId: Long?, amountCent: Long, note: String = "") =
-        viewModelScope.launch { repo.addSpent(goalId, amountCent, note) }
+    fun recordKept(goalId: Long?, amountCent: Long, title: String) =
+        viewModelScope.launch { repo.recordDecision(goalId, amountCent, title, kept = true) }
 
-    fun deleteDeposit(id: Long) = viewModelScope.launch { repo.deleteDeposit(id) }
+    fun recordBought(goalId: Long?, amountCent: Long, title: String) =
+        viewModelScope.launch { repo.recordDecision(goalId, amountCent, title, kept = false) }
 
-    fun moveDeposit(id: Long, goalId: Long?) = viewModelScope.launch { repo.moveDeposit(id, goalId) }
+    /** 把某笔标记为已转入 */
+    fun settle(id: Long) = viewModelScope.launch { repo.settleEntries(listOf(id)) }
+
+    /** 全部未落地的标记为已转入 */
+    fun settleAll() = viewModelScope.launch { repo.settleAllPending() }
+
+    fun deleteEntry(id: Long) = viewModelScope.launch { repo.deleteEntry(id) }
+
+    // ---- 目标 ----
 
     fun createGoal(
         title: String,
         emoji: String,
         targetCent: Long,
-        deadline: Long?,
         coverUri: String? = null,
         revealMode: Int = 0
     ) = viewModelScope.launch {
@@ -96,7 +99,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 title = title,
                 emoji = emoji,
                 targetCent = targetCent,
-                deadlineMillis = deadline,
                 coverUri = coverUri,
                 revealMode = revealMode
             )
@@ -111,8 +113,5 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun restoreGoal(goal: Goal) = viewModelScope.launch { repo.restoreGoal(goal) }
 
-    fun setDailyGoal(cent: Long) = viewModelScope.launch { prefs.setDailyGoal(cent) }
-
     fun setHaptics(enabled: Boolean) = viewModelScope.launch { prefs.setHaptics(enabled) }
-
 }

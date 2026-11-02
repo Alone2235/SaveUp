@@ -1,11 +1,12 @@
 package com.eta.saveup.data.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * 攒钱目标。一张卡片 = 一个想买的东西。
- * 金额一律用 Long 存「分」，绝不用 Float/Double。
+ * 攒钱目标。一张卡 = 一个想买的东西。
+ * 金额一律用 Long 存「分」。
  */
 @Entity(tableName = "goals")
 data class Goal(
@@ -31,16 +32,47 @@ data class Goal(
 }
 
 /**
- * 一笔攒钱记录（钱是「忍住没花」省下来的，或真的从别处挪进来的）。
- * goalId 为 null 表示还没分配到目标（收件箱）。
+ * 一次「决定」。
+ *
+ * 这是整个 App 的核心记录：每次面对一笔想花的钱，用户做出选择，
+ * 就产生一条 entry。它同时承担流水和决策日志两个角色。
+ *
+ * 金额一律保留正数，方向由 [decision] 决定。
  */
-@Entity(tableName = "deposits", indices = [androidx.room.Index("goalId"), androidx.room.Index("createdAt")])
+@Entity(
+    tableName = "entries",
+    indices = [Index("goalId"), Index("createdAt")]
+)
+data class Entry(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** 归属目标；为空表示还没分配 */
+    val goalId: Long? = null,
+    /** 这笔钱的金额（正数，单位分） */
+    val amountCent: Long,
+    /** 商品名，用户自己填的，可以为空 */
+    val title: String = "",
+    /** 0=留着（计入攒钱） 1=买了（不计入） */
+    val decision: Int = 0,
+    /** 0=未落地（钱还在手上） 1=已锁定（钱已转走） */
+    val settleState: Int = 0,
+    val createdAt: Long = System.currentTimeMillis()
+) {
+    companion object {
+        const val KEPT = 0
+        const val BOUGHT = 1
+
+        const val UNSETTLED = 0
+        const val SETTLED = 1
+    }
+}
+
+/** 历史表结构，保留以兼容旧库迁移；新逻辑不再写入 */
+@Entity(tableName = "deposits")
 data class Deposit(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val goalId: Long? = null,
     val amountCent: Long,
     val note: String = "",
-    /** 0=已攒下 1=已花掉（破戒） 2=已退回 */
     val status: Int = 0,
     val createdAt: Long = System.currentTimeMillis()
 ) {
@@ -51,7 +83,6 @@ data class Deposit(
     }
 }
 
-/** 每日打卡统计，用于 streak。day 用 yyyyMMdd 整数 */
 @Entity(tableName = "daily_stats")
 data class DailyStat(
     @PrimaryKey val day: Int,

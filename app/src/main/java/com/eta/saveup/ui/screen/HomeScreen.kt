@@ -42,8 +42,9 @@ import com.eta.saveup.ui.component.PillTag
 import com.eta.saveup.ui.component.ProgressRing
 import com.eta.saveup.ui.component.SectionTitle
 import com.eta.saveup.ui.component.SurfaceCard
-import com.eta.saveup.ui.component.formatPercent
 import com.eta.saveup.ui.component.UnlockCover
+import com.eta.saveup.ui.component.formatPercent
+import com.eta.saveup.ui.component.formatYuan
 import com.eta.saveup.ui.component.formatYuanInt
 import com.eta.saveup.ui.component.pressScale
 import com.eta.saveup.ui.component.rememberInteraction
@@ -55,6 +56,7 @@ import com.eta.saveup.ui.theme.Radius
 import com.eta.saveup.ui.theme.Space
 import com.eta.saveup.ui.theme.SuccessGreen
 import com.eta.saveup.ui.theme.TextAlpha
+import com.eta.saveup.ui.theme.WarnOrange
 
 @Composable
 fun HomeScreen(
@@ -62,7 +64,8 @@ fun HomeScreen(
     haptics: HapticsWrapper,
     onGoalClick: (GoalView) -> Unit,
     onNewGoal: () -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    onSettle: () -> Unit
 ) {
     val primary = state.activeGoals.firstOrNull() ?: state.doneGoals.firstOrNull()
 
@@ -72,11 +75,11 @@ fun HomeScreen(
             start = Space.page,
             end = Space.page,
             top = Space.md,
-            bottom = 128.dp
+            bottom = 160.dp
         ),
         verticalArrangement = Arrangement.spacedBy(Space.gap)
     ) {
-        // ---- 顶栏 ----
+        // ---- 顶栏：不显示余额，只显示连续天数 ----
         item {
             Row(
                 Modifier
@@ -93,8 +96,8 @@ fun HomeScreen(
                     )
                     Spacer(Modifier.height(Space.xxs))
                     Text(
-                        text = if (state.streak > 0) "已连续攒钱 ${state.streak} 天"
-                        else "今天还没攒，动动手指",
+                        text = if (state.streak > 0) "连续 ${state.streak} 天守住了"
+                        else "想买点什么？记一笔试试",
                         fontSize = Fonts.caption,
                         color = IosWhite.copy(alpha = TextAlpha.tertiary)
                     )
@@ -122,6 +125,11 @@ fun HomeScreen(
             }
         }
 
+        // ---- 待转入提示 ----
+        if (state.pendingCount > 0) {
+            item { PendingCard(state, onSettle, haptics) }
+        }
+
         // ---- 主目标 ----
         item {
             if (primary != null) {
@@ -131,17 +139,10 @@ fun HomeScreen(
             }
         }
 
-        // ---- 今日目标 ----
-        if (state.dailyGoalCent > 0) {
-            item { DailyCard(state) }
-        }
-
         // ---- 其它目标 ----
         val others = state.activeGoals.drop(1)
         if (others.isNotEmpty()) {
-            item {
-                SectionTitle("其它目标", "${others.size}")
-            }
+            item { SectionTitle("其它目标", "${others.size}") }
             items(others, key = { it.goal.id }) { gv ->
                 GoalCard(gv, onClick = { haptics.tick(); onGoalClick(gv) })
             }
@@ -163,6 +164,54 @@ fun HomeScreen(
     }
 }
 
+/** 待转入：这些钱还没真的转走，不算数 */
+@Composable
+private fun PendingCard(state: UiState, onSettle: () -> Unit, haptics: HapticsWrapper) {
+    val interaction = rememberInteraction()
+    SurfaceCard(modifier = Modifier.pressScale(interaction, 0.98f)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = interaction,
+                    indication = null
+                ) { haptics.tick(); onSettle() }
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(Radius.small))
+                        .background(WarnOrange.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("!", fontSize = Fonts.caption, color = WarnOrange, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(Space.xs))
+                Text(
+                    text = "有 ${state.pendingCount} 笔待转入",
+                    fontSize = Fonts.caption,
+                    fontWeight = FontWeight.Medium,
+                    color = IosWhite
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = formatYuan(state.pendingSumCent),
+                    fontSize = Fonts.caption,
+                    fontWeight = FontWeight.SemiBold,
+                    color = WarnOrange
+                )
+            }
+            Spacer(Modifier.height(Space.xxs))
+            Text(
+                text = "钱还在你手上，转走之后点一下才算数 · 点此全部标记已转入",
+                fontSize = Fonts.micro,
+                color = IosWhite.copy(alpha = TextAlpha.tertiary)
+            )
+        }
+    }
+}
+
 @Composable
 private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Unit) {
     val done = view.achieved
@@ -179,7 +228,6 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
                 ) { haptics.tick(); onClick() },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // 标题行
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(view.goal.emoji, fontSize = Fonts.title2)
                 Spacer(Modifier.width(Space.xs))
@@ -199,7 +247,6 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
             Spacer(Modifier.height(Space.lg))
 
             if (view.goal.coverUri != null) {
-                // 有解锁图：用图片揭示替代环形进度
                 Box {
                     UnlockCover(
                         model = view.goal.coverUri,
@@ -211,7 +258,6 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
                             .fillMaxWidth()
                             .height(200.dp)
                     )
-                    // 左下角浮层：百分比 + 差额
                     Column(
                         Modifier
                             .align(Alignment.BottomStart)
@@ -239,7 +285,6 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
                     }
                 }
             } else {
-                // 无图：环形进度
                 ProgressRing(progress = view.progress, diameter = 156.dp, strokeWidth = 13.dp) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         val percentAnim by animateFloatAsState(
@@ -264,13 +309,12 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
 
             Spacer(Modifier.height(Space.lg))
 
-            // 两个统计格：等宽分列，各自独立底
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Space.xs)
             ) {
                 StatCell(
-                    label = "已攒",
+                    label = "已锁定",
                     value = formatYuanInt(view.savedCent),
                     color = SuccessGreen,
                     modifier = Modifier.weight(1f)
@@ -311,69 +355,6 @@ private fun StatCell(label: String, value: String, color: Color, modifier: Modif
 }
 
 @Composable
-private fun DailyCard(state: UiState) {
-    val ratio = if (state.dailyGoalCent <= 0) 0f
-    else (state.todaySavedCent.toFloat() / state.dailyGoalCent).coerceIn(0f, 1f)
-    val reached = state.todaySavedCent >= state.dailyGoalCent
-
-    SurfaceCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(Radius.small))
-                    .background(
-                        if (reached) SuccessGreen.copy(alpha = 0.12f)
-                        else HyperBlue.copy(alpha = 0.10f)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (reached) "✓" else "今",
-                    fontSize = Fonts.body,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (reached) SuccessGreen else HyperBlue
-                )
-            }
-            Spacer(Modifier.width(Space.sm))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = if (reached) "今日目标达成" else "今日目标",
-                        fontSize = Fonts.caption,
-                        fontWeight = FontWeight.Medium,
-                        color = IosWhite.copy(alpha = TextAlpha.secondary)
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        text = formatYuanInt(state.todaySavedCent) + " / " +
-                            formatYuanInt(state.dailyGoalCent),
-                        fontSize = Fonts.micro,
-                        color = IosWhite.copy(alpha = TextAlpha.tertiary)
-                    )
-                }
-                Spacer(Modifier.height(Space.xs))
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(Radius.pill))
-                        .background(HyperBlue.copy(alpha = 0.10f))
-                ) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth(ratio)
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(Radius.pill))
-                            .background(if (reached) SuccessGreen else HyperBlue)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun NewGoalButton(onClick: () -> Unit, haptics: HapticsWrapper) {
     val interaction = rememberInteraction()
     Row(
@@ -381,7 +362,6 @@ private fun NewGoalButton(onClick: () -> Unit, haptics: HapticsWrapper) {
             .fillMaxWidth()
             .pressScale(interaction, 0.98f)
             .clip(RoundedCornerShape(Radius.medium))
-            .background(Color.Transparent)
             .clickable(
                 interactionSource = interaction,
                 indication = null
@@ -409,9 +389,7 @@ private fun NewGoalButton(onClick: () -> Unit, haptics: HapticsWrapper) {
 @Composable
 private fun EmptyCard(onNewGoal: () -> Unit) {
     val interaction = rememberInteraction()
-    SurfaceCard(
-        modifier = Modifier.pressScale(interaction, 0.98f)
-    ) {
+    SurfaceCard(modifier = Modifier.pressScale(interaction, 0.98f)) {
         Column(
             Modifier
                 .fillMaxWidth()

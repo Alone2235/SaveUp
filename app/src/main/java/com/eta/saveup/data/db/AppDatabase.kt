@@ -4,28 +4,67 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @Database(
-    entities = [Goal::class, Deposit::class, DailyStat::class],
-    version = 2,
+    entities = [Goal::class, Entry::class, Deposit::class, DailyStat::class],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun goalDao(): GoalDao
+    abstract fun entryDao(): EntryDao
     abstract fun depositDao(): DepositDao
     abstract fun dailyDao(): DailyDao
 
     companion object {
         /** v1 → v2：目标表增加解锁封面字段 */
-        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE goals ADD COLUMN coverUri TEXT")
                 db.execSQL("ALTER TABLE goals ADD COLUMN revealMode INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * v2 → v3：引入 entries（决策+流水合一）。
+         * 把旧的 deposits 迁移过来：SAVED → KEPT+SETTLED，SPENT → BOUGHT+SETTLED。
+         * 旧数据默认为已落地，避免历史金额凭空消失。
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS entries (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        goalId INTEGER,
+                        amountCent INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        decision INTEGER NOT NULL,
+                        settleState INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_entries_goalId ON entries(goalId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_entries_createdAt ON entries(createdAt)")
+
+                // 旧记录迁移：SAVED(0) → KEPT(0)+SETTLED(1)；SPENT(1) → BOUGHT(1)+SETTLED(1)
+                db.execSQL(
+                    """
+                    INSERT INTO entries (goalId, amountCent, title, decision, settleState, createdAt)
+                    SELECT goalId, amountCent, note,
+                           CASE WHEN status = 0 THEN 0 ELSE 1 END,
+                           1,
+                           createdAt
+                    FROM deposits
+                    """.trimIndent()
+                )
             }
         }
 
@@ -37,11 +76,11 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun build(ctx: Context): AppDatabase =
             Room.databaseBuilder(ctx, AppDatabase::class.java, "saveup.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         super.onCreate(db)
-                        // 首装放一张示例卡，方便上手（只是一条普通数据，随时可改可删）
+                        // 首装放一张示例卡，方便上手（普通数据，随时可改可删）
                         CoroutineScope(Dispatchers.IO).launch {
                             get(ctx).goalDao().run {
                                 if (count() == 0) {
