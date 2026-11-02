@@ -15,9 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -33,19 +31,20 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eta.saveup.ui.theme.Dimens
-import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * 单列数字滚轮（LazyColumn + snapFlingBehavior，支持循环）。
+ * 单列数字滚轮。
  *
- * 循环实现：
- * - items 在内部重复 [LOOPS] 圈，初始定位到正中间那圈
- * - 滑到靠近两端时静默 scrollToItem 到等价位置，视觉无缝
- * - 对外始终只报告真实下标（0..items.size-1）
+ * 设计原则：**完全不受控**。
  *
- * 性能：所有行字号/字重/颜色固定，居中效果只在 graphicsLayer 绘制阶段算，滚动零重组。
+ * - [initialIndex] 只在实例创建时读取一次，之后外部再怎么变都不影响轮子
+ * - 轮子位置唯一真相是内部的 listState，绝不与外部状态双向同步
+ * - 需要让轮子跳到某个值时，外部改变 [revision] 即可让整个实例重建
+ *
+ * 这样从结构上杜绝了「外部值 ↔ 内部滚动」的回环，
+ * 也就不可能再出现自己滚动、自己跳转。
  */
 private const val LOOPS = 7
 
@@ -53,7 +52,7 @@ private const val LOOPS = 7
 @Composable
 fun WheelColumn(
     items: List<String>,
-    selectedIndex: Int,
+    initialIndex: Int,
     onSelected: (Int) -> Unit,
     modifier: Modifier = Modifier,
     itemHeight: Dp = Dimens.wheelItem,
@@ -69,39 +68,35 @@ fun WheelColumn(
     val looping = n > 1
     val loops = if (looping) LOOPS else 1
     val total = n * loops
-    val midLoop = loops / 2
-    val midStart = midLoop * n
+    val midStart = (loops / 2) * n
 
     val centerOffset = visibleCount / 2
-    val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = if (looping) midStart + selectedIndex else selectedIndex
-    )
+    val startIndex = if (looping) midStart + initialIndex.coerceIn(0, n - 1) else initialIndex.coerceIn(0, n - 1)
+
+    // 只在创建时读一次
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = startIndex)
     val fling = rememberSnapFlingBehavior(lazyListState = listState)
     val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
-
-    // 唯一真相：listState 的位置。不维护影子状态，只用它判断"是否用户主动操作"。
-    var lastTick by remember { mutableIntStateOf(selectedIndex) }
-
-    var lastSyncedValue by remember { mutableIntStateOf(selectedIndex) }
-    // 外部同步期间屏蔽上报，避免"同步→上报→重组→再同步"的回环
-    var suppressReport by remember { mutableStateOf(false) }
 
     fun realOf(absolute: Int): Int =
         if (looping) ((absolute % n) + n) % n else absolute.coerceIn(0, n - 1)
 
-    fun currentReal(): Int {
-        val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-        return realOf(listState.firstVisibleItemIndex + fractional.roundToInt())
-    }
+    var lastTick by remember { mutableIntStateOf(realOf(startIndex)) }
 
-    // 用户操作驱动：跨行震动 + 停止后上报
+    // 唯一一条流：滚动中给震动，停止时归位 + 上报
     LaunchedEffect(listState, n, loops) {
         var lastVibrateAt = 0L
         snapshotFlow {
-            val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-            val absolute = listState.firstVisibleItemIndex + fractional.roundToInt()
-            Triple(realOf(absolute), listState.isScrollInProgress, listState.firstVisibleItemIndex)
-        }.collect { (real, scrolling, rawIndex) ->
+            Triple(
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+                listState.isScrollInProgress
+            )
+        }.collect { (rawIndex, offset, scrolling) ->
+            val fractional = offset / itemHeightPx
+            val absolute = rawIndex + fractional.roundToInt()
+            val real = realOf(absolute)
+
             if (scrolling) {
                 if (real != lastTick) {
                     lastTick = real
@@ -114,7 +109,7 @@ fun WheelColumn(
                 return@collect
             }
 
-            // 停止：先做循环归位，再上报
+            // 停止：循环边界静默归位
             if (looping) {
                 val fix = when {
                     rawIndex < n -> rawIndex + n * (loops - 2)
@@ -127,35 +122,12 @@ fun WheelColumn(
                 }
             }
 
-            if (suppressReport) return@collect
-
-            val settled = currentReal()
-            if (settled != lastTick || settled != lastSyncedValue) {
-                lastTick = settled
-                lastSyncedValue = settled
-                onSelected(settled)
+            // 上报
+            if (real != lastTick) {
+                lastTick = real
+                onSelected(real)
             }
         }
-    }
-
-    // 外部同步：只在"外部值确实变了"时执行一次，用序号避免重复
-    LaunchedEffect(selectedIndex) {
-        if (selectedIndex !in items.indices) return@LaunchedEffect
-        if (listState.isScrollInProgress) return@LaunchedEffect
-        // 与当前轮子位置一致 → 不需要动
-        if (selectedIndex == currentReal()) {
-            lastSyncedValue = selectedIndex
-            lastTick = selectedIndex
-            return@LaunchedEffect
-        }
-
-        suppressReport = true
-        listState.scrollToItem(if (looping) midStart + selectedIndex else selectedIndex)
-        lastSyncedValue = selectedIndex
-        lastTick = selectedIndex
-        // 等一拍让 snapshotFlow 把这次内部滚动消化掉，再恢复上报
-        kotlinx.coroutines.delay(80)
-        suppressReport = false
     }
 
     Box(
