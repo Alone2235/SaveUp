@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -79,65 +80,86 @@ fun WheelColumn(
     val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
 
     var lastTick by remember { mutableIntStateOf(selectedIndex) }
-    // 本列最近一次主动上报给外部的值；用于区分"自己滚的"与"外部要求改的"
+    // 本列最近一次主动上报给外部的值；区分"自己滚的"与"外部要求改的"
     var lastReported by remember { mutableIntStateOf(selectedIndex) }
+    // 程序内部滚动（循环归位 / 外部同步）期间，不向上报，避免回环
+    var internalScroll by remember { mutableStateOf(false) }
 
-    /** 当前居中位置对应的「真实下标」 */
-    fun currentRealIndex(): Int {
+    fun realOf(absolute: Int): Int =
+        if (looping) ((absolute % n) + n) % n else absolute.coerceIn(0, n - 1)
+
+    /** 当前居中位置对应的真实下标 */
+    fun currentReal(): Int {
         val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-        val absolute = listState.firstVisibleItemIndex + fractional.roundToInt()
-        return if (looping) ((absolute % n) + n) % n else absolute.coerceIn(0, n - 1)
+        return realOf(listState.firstVisibleItemIndex + fractional.roundToInt())
     }
 
-    // 震动 + 选中回调
+    // 单一状态机：滚动中 → 震动；停止 → 归位（如有需要）→ 上报
+    LaunchedEffect(listState, n, loops) {
+        var lastVibrateAt = 0L
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling ->
+                if (scrolling) return@collect
+                // 滚动停止
+
+                // 1) 循环边界归位（内部动作，不上报）
+                if (looping) {
+                    val idx = listState.firstVisibleItemIndex
+                    val fix = when {
+                        idx < n -> idx + n * (loops - 2)
+                        idx >= n * (loops - 1) -> idx - n * (loops - 2)
+                        else -> null
+                    }
+                    if (fix != null) {
+                        internalScroll = true
+                        listState.scrollToItem(fix)
+                        internalScroll = false
+                        return@collect
+                    }
+                }
+
+                // 2) 上报（归位或外部同步期间不上报）
+                if (!internalScroll) {
+                    val real = currentReal()
+                    if (real != lastReported) {
+                        lastReported = real
+                        lastTick = real
+                        onSelected(real)
+                    }
+                }
+            }
+    }
+
+    // 跨整行震动（拖动手势进行中）
     LaunchedEffect(listState, n) {
         var lastVibrateAt = 0L
         snapshotFlow {
             val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-            val absolute = listState.firstVisibleItemIndex + fractional.roundToInt()
-            val real = if (looping) ((absolute % n) + n) % n else absolute.coerceIn(0, n - 1)
-            real to listState.isScrollInProgress
-        }.collect { (real, scrolling) ->
+            listState.firstVisibleItemIndex + fractional.roundToInt()
+        }.collect { absolute ->
+            if (!listState.isScrollInProgress) return@collect
+            val real = realOf(absolute)
             if (real != lastTick) {
                 lastTick = real
-                if (scrolling) {
-                    val now = System.currentTimeMillis()
-                    if (now - lastVibrateAt >= 45L) {
-                        lastVibrateAt = now
-                        haptics?.wheel()
-                    }
+                val now = System.currentTimeMillis()
+                if (now - lastVibrateAt >= 45L) {
+                    lastVibrateAt = now
+                    haptics?.wheel()
                 }
-            }
-            if (!scrolling) {
-                lastReported = real
-                onSelected(real)
             }
         }
     }
 
-    // 循环边界静默归位：只在本列滚动停止后校正，避免打断滚动、也避免互相干扰
-    LaunchedEffect(listState, n, loops) {
-        if (!looping) return@LaunchedEffect
-        snapshotFlow { listState.isScrollInProgress }
-            .collect { scrolling ->
-                if (scrolling) return@collect
-                val idx = listState.firstVisibleItemIndex
-                when {
-                    idx < n -> listState.scrollToItem(idx + n * (loops - 2))
-                    idx >= n * (loops - 1) -> listState.scrollToItem(idx - n * (loops - 2))
-                }
-            }
-    }
-
-    // 外部改值 → 滚到对应位置。
-    // 用「本列自己最近上报过的值」做闸门：别的列滚动引起的重组不会误触发本列滚动。
+    // 外部改值 → 滚到对应位置；只处理"不是自己上报的那个值"
     LaunchedEffect(selectedIndex, n) {
         if (selectedIndex !in items.indices) return@LaunchedEffect
-        if (selectedIndex == lastReported) return@LaunchedEffect // 就是自己上报的值，不动
-        if (listState.isScrollInProgress) return@LaunchedEffect // 正在滚，不打扰
+        if (selectedIndex == lastReported) return@LaunchedEffect
+        if (listState.isScrollInProgress) return@LaunchedEffect
 
         val target = if (looping) midStart + selectedIndex else selectedIndex
+        internalScroll = true
         listState.animateScrollToItem(target)
+        internalScroll = false
         lastTick = selectedIndex
         lastReported = selectedIndex
     }
