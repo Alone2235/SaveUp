@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -34,36 +35,40 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.eta.saveup.ui.theme.Dimens
 import com.eta.saveup.ui.theme.Fonts
 import com.eta.saveup.ui.theme.HyperBlue
 
 /**
- * 金额录入：滚轮 + 快速输入。
+ * 按数位分列的金额滚轮：万 / 千 / 百 / 十 / 元 / 角分。
  *
- * 设计取舍：
- * - 「元」列负责整数部分，滚起来快
- * - 「角分」合并成一列 0..99，两列变一列，减少拨动次数
- * - 点顶部的金额可直接用系统键盘输入，大额不用拨半天
+ * 每列只管一个数位（角分列管 0..99），拨动上限固定，
+ * 设 8999 只需要拨 4 下，而不是从 0 拨到 8999。
+ *
+ * 顶部大字可直接点开系统键盘输入，大额一步到位。
  */
 @Composable
 fun AmountWheel(
     amountCent: Long,
     onAmountChange: (Long) -> Unit,
     modifier: Modifier = Modifier,
-    maxYuan: Int = 999999,
+    maxCent: Long = 99_999_999L, // 最高 999,999.99
     haptics: HapticsWrapper? = null,
     activeColor: Color = Color(0xFF1B1F27),
     inactiveColor: Color = Color(0xFFB6BCC8),
     labelColor: Color = Color(0xFF878D99),
     accent: Color = HyperBlue
 ) {
-    val maxCent = maxYuan * 100L + 99L
     val clamped = amountCent.coerceIn(0L, maxCent)
-    val yuan = (clamped / 100).toInt()
+    val wan = (clamped / 1_000_000L % 10).toInt()
+    val qian = (clamped / 100_000L % 10).toInt()
+    val bai = (clamped / 10_000L % 10).toInt()
+    val shi = (clamped / 1_000L % 10).toInt()
+    val yuan = (clamped / 100L % 10).toInt()
     val cents = (clamped % 100).toInt()
 
-    val yuanItems = remember(maxYuan) { (0..maxYuan).map { it.toString() } }
+    val digitItems = remember { (0..9).map { it.toString() } }
     val centItems = remember { (0..99).map { it.toString().padStart(2, '0') } }
 
     var editing by remember { mutableStateOf(false) }
@@ -76,6 +81,9 @@ fun AmountWheel(
             focusRequester.requestFocus()
         }
     }
+
+    fun rebuild(w: Int, q: Int, b: Int, s: Int, y: Int, c: Int): Long =
+        w * 1_000_000L + q * 100_000L + b * 10_000L + s * 1_000L + y * 100L + c
 
     Column(modifier.fillMaxWidth()) {
         // 顶部金额条：点击进入键盘输入
@@ -118,7 +126,7 @@ fun AmountWheel(
                         ),
                         cursorBrush = SolidColor(accent),
                         modifier = Modifier
-                            .width(240.dp)
+                            .width(260.dp)
                             .focusRequester(focusRequester)
                     )
                 }
@@ -143,7 +151,7 @@ fun AmountWheel(
                         haptics?.success()
                         editing = false
                     }
-                    .padding(vertical = Dimens.gap8),
+                    .padding(vertical = Dimens.gap10),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -158,35 +166,73 @@ fun AmountWheel(
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Dimens.gap4)
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Box(Modifier.weight(1.6f)) {
-                    WheelColumn(
-                        items = yuanItems,
-                        selectedIndex = yuan,
-                        onSelected = { y -> onAmountChange(y * 100L + cents) },
-                        textSize = 40,
-                        activeColor = activeColor,
-                        inactiveColor = inactiveColor,
-                        haptics = haptics
-                    )
+                DigitCell(wan, "万") { onAmountChange(rebuild(it, qian, bai, shi, yuan, cents)) }
+                DigitCell(qian, "千") { onAmountChange(rebuild(wan, it, bai, shi, yuan, cents)) }
+                DigitCell(bai, "百") { onAmountChange(rebuild(wan, qian, it, shi, yuan, cents)) }
+                DigitCell(shi, "十") { onAmountChange(rebuild(wan, qian, bai, it, yuan, cents)) }
+                DigitCell(yuan, "元") { onAmountChange(rebuild(wan, qian, bai, shi, it, cents)) }
+
+                Box(Modifier.weight(1.1f)) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        MiniWheel(
+                            items = centItems,
+                            selected = cents,
+                            onSelected = { onAmountChange(rebuild(wan, qian, bai, shi, yuan, it)) },
+                            haptics = haptics,
+                            activeColor = activeColor,
+                            inactiveColor = inactiveColor,
+                            textSize = 26
+                        )
+                        Text("角分", fontSize = 10.sp, color = labelColor)
+                    }
                 }
-                Text("元", fontSize = Fonts.body, color = labelColor)
-                Box(Modifier.weight(1f)) {
-                    WheelColumn(
-                        items = centItems,
-                        selectedIndex = cents,
-                        onSelected = { c -> onAmountChange(yuan * 100L + c) },
-                        textSize = 40,
-                        activeColor = activeColor,
-                        inactiveColor = inactiveColor,
-                        haptics = haptics
-                    )
-                }
-                Text("角分", fontSize = Fonts.caption, color = labelColor)
             }
         }
     }
+}
+
+@Composable
+private fun RowScope.DigitCell(
+    value: Int,
+    label: String,
+    onValue: (Int) -> Unit
+) {
+    Box(Modifier.weight(0.85f)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            MiniWheel(
+                items = remember { (0..9).map { it.toString() } },
+                selected = value,
+                onSelected = onValue,
+                textSize = 26
+            )
+            Text(label, fontSize = 10.sp, color = Color(0xFF878D99))
+        }
+    }
+}
+
+@Composable
+private fun MiniWheel(
+    items: List<String>,
+    selected: Int,
+    onSelected: (Int) -> Unit,
+    haptics: HapticsWrapper? = null,
+    activeColor: Color = Color(0xFF1B1F27),
+    inactiveColor: Color = Color(0xFFB6BCC8),
+    textSize: Int = 26
+) {
+    WheelColumn(
+        items = items,
+        selectedIndex = selected,
+        onSelected = onSelected,
+        itemHeight = 40.dp,
+        visibleCount = 3,
+        textSize = textSize,
+        activeColor = activeColor,
+        inactiveColor = inactiveColor,
+        haptics = haptics
+    )
 }
 
 private fun formatInput(cent: Long): String {
