@@ -68,25 +68,6 @@ interface DepositDao {
 
     @Query("SELECT COUNT(*) FROM deposits WHERE goalId IS NULL AND status = 0")
     fun observeInboxCount(): Flow<Int>
-}
-
-data class GoalSum(val goalId: Long, val sum: Long)
-
-@Dao
-interface DailyDao {
-
-    @Query("SELECT * FROM daily_stats ORDER BY day DESC LIMIT :limit")
-    fun observeRecent(limit: Int = 90): Flow<List<DailyStat>>
-
-    @Query("SELECT * FROM daily_stats WHERE day = :day")
-    suspend fun get(day: Int): DailyStat?
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(stat: DailyStat)
-
-    @Query("DELETE FROM daily_stats")
-    suspend fun clear()
-}
 
     /**
      * 直接从流水聚合每日数据。
@@ -110,3 +91,22 @@ interface DailyDao {
         """
     )
     fun observeDailyStats(fromMillis: Long): Flow<List<DailyStat>>
+}
+
+data class GoalSum(val goalId: Long, val sum: Long)
+
+@Dao
+interface DailyDao {
+
+    @Query("SELECT * FROM daily_stats ORDER BY day DESC LIMIT :limit")
+    fun observeRecent(limit: Int = 90): Flow<List<DailyStat>>
+
+    @Query("SELECT * FROM daily_stats WHERE day = :day")
+    suspend fun get(day: Int): DailyStat?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(stat: DailyStat)
+
+    @Query("DELETE FROM daily_stats")
+    suspend fun clear()
+}
