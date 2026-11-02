@@ -119,8 +119,9 @@ fun SettingsScreen(
                 AmountWheel(
                     amountCent = state.dailyGoalCent,
                     onAmountChange = onDailyGoalChange,
-                    maxYuan = 9999,
-                    haptics = haptics
+                    maxYuan = 99999,
+                    haptics = haptics,
+                    accent = HyperBlue
                 )
             }
         }

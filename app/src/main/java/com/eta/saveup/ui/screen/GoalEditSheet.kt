@@ -150,7 +150,8 @@ fun GoalEditSheet(
             AmountWheel(
                 amountCent = targetCent,
                 onAmountChange = { targetCent = it },
-                haptics = haptics
+                haptics = haptics,
+                accent = HyperBlue
             )
 
             Spacer(Modifier.height(Dimens.gap16))

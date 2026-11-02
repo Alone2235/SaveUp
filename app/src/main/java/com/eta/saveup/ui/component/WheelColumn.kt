@@ -88,26 +88,22 @@ fun WheelColumn(
             .height(itemHeight * visibleCount)
             .clip(RoundedCornerShape(12.dp))
             .pointerInput(maxIndex, itemPx) {
-                var lastSampleTime = 0L
-                var lastSampleValue = 0f
+                // 采样窗口：记录最近 80ms 内（时间, 位置）用于算速度
+                var winStartTime = 0L
+                var winStartPos = 0f
 
                 detectDragGestures(
                     onDragStart = {
                         animJob[0]?.cancel()
-                        lastSampleTime = 0L
-                        lastSampleValue = posState.floatValue
+                        winStartTime = System.nanoTime()
+                        winStartPos = posState.floatValue
                     },
                     onDragEnd = {
                         val now = System.nanoTime()
-                        val dtMs = if (lastSampleTime > 0L) (now - lastSampleTime) / 1_000_000f else 0f
-                        // 手指位移（像素）：正值=向下滑，负值=向上滑
-                        val fingerDvPx = posState.floatValue - lastSampleValue
-                        // 行数变化（正值=向上滚，索引增大）
-                        val linesDv = fingerDvPx
-                        // 每毫秒行数
-                        val linesPerMs = if (dtMs > 16f) linesDv / dtMs else 0f
-                        // 每帧(16.6ms)行数
-                        val v0 = linesPerMs * 16.6f
+                        val dtMs = (now - winStartTime) / 1_000_000f
+                        val dLines = posState.floatValue - winStartPos
+                        // 每帧(16.6ms)行数，符号与 posState 增量一致
+                        val v0 = if (dtMs > 16f) dLines / dtMs * 16.6f else 0f
 
                         animJob[0] = scope.launch {
                             if (abs(v0) > 0.02f) {
@@ -126,17 +122,17 @@ fun WheelColumn(
                 ) { change, dragAmount ->
                     change.consume()
 
+                    // 每 60ms 滑动采样窗口起点，保证速度反映"最近"的手感
                     val now = System.nanoTime()
-                    val dt = (now - lastSampleTime) / 1_000_000f
-                    if (lastSampleTime == 0L || dt > 80f) {
-                        lastSampleTime = now
-                        lastSampleValue = posState.floatValue
+                    if ((now - winStartTime) / 1_000_000f > 60f) {
+                        winStartTime = now
+                        winStartPos = posState.floatValue
                     }
 
-                    // 手指上滑(dy<0) → 内容上移 → 索引变大
+                    // 手指上滑(dy<0) → 索引增大
                     val deltaLines = -dragAmount.y / itemPx
-                    val next = (posState.floatValue + deltaLines).coerceIn(0f, maxIndex.toFloat())
-                    posState.floatValue = next
+                    posState.floatValue =
+                        (posState.floatValue + deltaLines).coerceIn(0f, maxIndex.toFloat())
                 }
             }
     ) {

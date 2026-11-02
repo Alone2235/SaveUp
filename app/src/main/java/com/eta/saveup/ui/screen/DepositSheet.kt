@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.dp
 import com.eta.saveup.data.repo.GoalView
 import com.eta.saveup.ui.component.AmountWheel
 import com.eta.saveup.ui.component.HapticsWrapper
-import com.eta.saveup.ui.component.formatYuan
 import com.eta.saveup.ui.theme.Dimens
 import com.eta.saveup.ui.theme.Fonts
 import com.eta.saveup.ui.theme.HyperBlue
@@ -90,27 +89,12 @@ fun DepositSheet(
 
             Spacer(Modifier.height(Dimens.gap16))
 
-            // 金额显示
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.Bottom
-            ) {
-                Text(
-                    text = formatYuan(amountCent),
-                    fontSize = Fonts.amountHuge,
-                    fontWeight = FontWeight.Bold,
-                    color = accent
-                )
-            }
-
-            Spacer(Modifier.height(Dimens.gap8))
-
-            // 滚轮
+            // 金额录入（顶部大字可点，直接键盘输入）
             AmountWheel(
                 amountCent = amountCent,
                 onAmountChange = { amountCent = it },
-                haptics = haptics
+                haptics = haptics,
+                accent = accent
             )
 
             Spacer(Modifier.height(Dimens.gap12))
