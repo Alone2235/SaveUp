@@ -82,7 +82,10 @@ fun WheelColumn(
     fun realOf(absolute: Int): Int =
         if (looping) ((absolute % n) + n) % n else absolute.coerceIn(0, n - 1)
 
+    // 震动去重用的标记（滚动过程中就会更新）
     var lastTick by remember { mutableIntStateOf(realOf(startIndex)) }
+    // 已上报过的值（只在滚动停止时更新），与 lastTick 分开，避免互相吞掉
+    var lastReported by remember { mutableIntStateOf(realOf(startIndex)) }
 
     // 唯一一条流：滚动中给震动，停止时归位 + 上报
     LaunchedEffect(listState, n, loops) {
@@ -123,8 +126,9 @@ fun WheelColumn(
                 }
             }
 
-            // 上报
-            if (real != lastTick) {
+            // 上报：与 lastTick 无关，只看是否和上次上报值不同
+            if (real != lastReported) {
+                lastReported = real
                 lastTick = real
                 onSelected(real)
             }
