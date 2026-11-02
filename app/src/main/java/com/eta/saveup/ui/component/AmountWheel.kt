@@ -185,14 +185,14 @@ fun AmountWheel(
                     exit = shrinkHorizontally() + fadeOut()
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        DigitCell(wan, "万", { onAmountChange(rebuild(it, qian, bai, shi, yuan, jiao * 10 + fen)) }, cellWeight)
-                        DigitCell(qian, "千", { onAmountChange(rebuild(wan, it, bai, shi, yuan, jiao * 10 + fen)) }, cellWeight)
-                        DigitCell(bai, "百", { onAmountChange(rebuild(wan, qian, it, shi, yuan, jiao * 10 + fen)) }, cellWeight)
+                        DigitCell(wan, "万", { onAmountChange(rebuild(it, qian, bai, shi, yuan, jiao * 10 + fen)) }, cellWeight, haptics = haptics)
+                        DigitCell(qian, "千", { onAmountChange(rebuild(wan, it, bai, shi, yuan, jiao * 10 + fen)) }, cellWeight, haptics = haptics)
+                        DigitCell(bai, "百", { onAmountChange(rebuild(wan, qian, it, shi, yuan, jiao * 10 + fen)) }, cellWeight, haptics = haptics)
                     }
                 }
 
-                DigitCell(shi, "十", { onAmountChange(rebuild(wan, qian, bai, it, yuan, jiao * 10 + fen)) }, cellWeight)
-                DigitCell(yuan, "元", { onAmountChange(rebuild(wan, qian, bai, shi, it, jiao * 10 + fen)) }, cellWeight)
+                DigitCell(shi, "十", { onAmountChange(rebuild(wan, qian, bai, it, yuan, jiao * 10 + fen)) }, cellWeight, haptics = haptics)
+                DigitCell(yuan, "元", { onAmountChange(rebuild(wan, qian, bai, shi, it, jiao * 10 + fen)) }, cellWeight, haptics = haptics)
 
                 // 小数点：元与角的视觉分隔
                 Text(
@@ -204,9 +204,9 @@ fun AmountWheel(
                 )
 
                 // 角
-                DigitCell(jiao, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, it * 10 + fen)) }, cellWeight, showLabel = false)
+                DigitCell(jiao, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, it * 10 + fen)) }, cellWeight, showLabel = false, haptics = haptics)
                 // 分
-                DigitCell(fen, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, jiao * 10 + it)) }, cellWeight, showLabel = false)
+                DigitCell(fen, "", { onAmountChange(rebuild(wan, qian, bai, shi, yuan, jiao * 10 + it)) }, cellWeight, showLabel = false, haptics = haptics)
             }
 
             if (!highExpanded) {
@@ -240,7 +240,8 @@ private fun RowScope.DigitCell(
     label: String,
     onValue: (Int) -> Unit,
     weight: Float = 1f,
-    showLabel: Boolean = true
+    showLabel: Boolean = true,
+    haptics: HapticsWrapper? = null
 ) {
     Box(Modifier.weight(weight)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -250,7 +251,8 @@ private fun RowScope.DigitCell(
                 onSelected = onValue,
                 itemHeight = 44.dp,
                 visibleCount = 3,
-                textSize = 26
+                textSize = 26,
+                haptics = haptics
             )
             if (showLabel) {
                 Text(label, fontSize = 10.sp, color = Color(0xFF878D99))

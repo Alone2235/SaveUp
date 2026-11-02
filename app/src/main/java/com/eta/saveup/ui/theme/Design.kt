@@ -31,7 +31,7 @@ object Dimens {
     val tabBarHeight = 64.dp
 
     /** 滚轮单行高度 */
-    val wheelItem = 54.dp
+    val wheelItem = 56.dp
 }
 
 object Fonts {
