@@ -87,3 +87,26 @@ interface DailyDao {
     @Query("DELETE FROM daily_stats")
     suspend fun clear()
 }
+
+    /**
+     * 直接从流水聚合每日数据。
+     *
+     * 不再依赖 daily_stats 这个累加计数器 —— 计数器一旦和流水错位（删除、
+     * 异常退出）就会永久偏，且难以自愈。这里以流水为唯一真相。
+     *
+     * day 用 SQLite 的本地日期函数换算，与 createdDay 同口径。
+     */
+    @Query(
+        """
+        SELECT
+            CAST(strftime('%Y%m%d', createdAt / 1000, 'unixepoch', 'localtime') AS INTEGER) AS day,
+            SUM(CASE WHEN status = 0 THEN amountCent ELSE 0 END) AS savedCent,
+            CAST(SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS INTEGER) AS savedCount,
+            SUM(CASE WHEN status = 1 THEN amountCent ELSE 0 END) AS spentCent
+        FROM deposits
+        WHERE createdAt >= :fromMillis
+        GROUP BY day
+        ORDER BY day DESC
+        """
+    )
+    fun observeDailyStats(fromMillis: Long): Flow<List<DailyStat>>

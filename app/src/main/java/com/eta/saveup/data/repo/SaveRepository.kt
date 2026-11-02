@@ -25,13 +25,14 @@ class SaveRepository(private val db: AppDatabase) {
 
     private val goalDao = db.goalDao()
     private val depositDao = db.depositDao()
-    private val dailyDao = db.dailyDao()
 
     val goals: Flow<List<Goal>> = goalDao.observeAll()
     val allDeposits: Flow<List<Deposit>> = depositDao.observeAll()
     val totalSaved: Flow<Long> = depositDao.observeTotalSaved().map { it ?: 0L }
     val inboxCount: Flow<Int> = depositDao.observeInboxCount()
-    val recentDaily: Flow<List<DailyStat>> = dailyDao.observeRecent()
+    /** 90 天每日统计：以流水实时聚合为准，不读累加计数器 */
+    val recentDaily: Flow<List<DailyStat>> =
+        depositDao.observeDailyStats(System.currentTimeMillis() - 90L * 24 * 3600 * 1000)
 
     fun goalViews(): Flow<List<GoalView>> =
         kotlinx.coroutines.flow.combine(goals, depositDao.observeSumsByGoal()) { goals, sums ->
@@ -69,14 +70,6 @@ class SaveRepository(private val db: AppDatabase) {
         depositDao.insert(
             Deposit(goalId = goalId, amountCent = amountCent, note = note.trim())
         )
-        val day = todayKey()
-        val cur = dailyDao.get(day) ?: DailyStat(day)
-        dailyDao.upsert(
-            cur.copy(
-                savedCent = cur.savedCent + amountCent,
-                savedCount = cur.savedCount + 1
-            )
-        )
         // 目标状态重算（攒满自动完成，多退少补都靠这一处）
         goalId?.let { gid -> refreshGoalStatus(gid) }
     }
@@ -87,29 +80,13 @@ class SaveRepository(private val db: AppDatabase) {
         depositDao.insert(
             Deposit(goalId = goalId, amountCent = amountCent, note = note.trim(), status = Deposit.SPENT)
         )
-        val day = todayKey()
-        val cur = dailyDao.get(day) ?: DailyStat(day)
-        dailyDao.upsert(cur.copy(spentCent = cur.spentCent + amountCent))
     }
 
     suspend fun deleteDeposit(id: Long) {
         val d = depositDao.get(id) ?: return
         depositDao.delete(id)
 
-        // 回滚当日统计
-        val day = dayKey(d.createdAt)
-        val cur = dailyDao.get(day)
-        if (cur != null) {
-            dailyDao.upsert(
-                if (d.status == Deposit.SPENT)
-                    cur.copy(spentCent = (cur.spentCent - d.amountCent).coerceAtLeast(0))
-                else
-                    cur.copy(
-                        savedCent = (cur.savedCent - d.amountCent).coerceAtLeast(0),
-                        savedCount = (cur.savedCount - 1).coerceAtLeast(0)
-                    )
-            )
-        }
+        // 统计由流水实时聚合，删掉流水即自动回滚，无需手动维护计数器
 
         // 目标状态无条件重算：删掉任何一笔都可能让它不再达标
         d.goalId?.let { gid -> refreshGoalStatus(gid) }
