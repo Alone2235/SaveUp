@@ -50,12 +50,19 @@ fun GoalCard(
     }
     val progress by animateFloatAsState(view.progress, label = "p")
 
+    val interaction = rememberInteraction()
+
     Box(
         modifier
             .fillMaxWidth()
+            .pressScale(interaction)
             .clip(RoundedCornerShape(Dimens.cardRadius))
             .background(Color.White)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick
+            )
             .padding(Dimens.cardPadding)
     ) {
         // 完成后右侧淡淡的金色底光

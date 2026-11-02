@@ -4,6 +4,12 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -45,7 +51,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.eta.saveup.data.db.Goal
 import com.eta.saveup.data.repo.GoalView
+import com.eta.saveup.ui.component.pressScale
 import com.eta.saveup.ui.component.rememberHaptics
+import com.eta.saveup.ui.component.rememberInteraction
 import com.eta.saveup.ui.screen.DepositSheet
 import com.eta.saveup.ui.screen.GoalDetailScreen
 import com.eta.saveup.ui.screen.GoalEditSheet
@@ -62,6 +70,12 @@ private sealed interface Route {
     data object Home : Route
     data class Detail(val goalId: Long) : Route
     data object Settings : Route
+}
+
+/** 用于决定转场方向：列表页 0，二级页 1 */
+private fun Route.depth(): Int = when (this) {
+    is Route.Home -> 0
+    else -> 1
 }
 
 @Composable
@@ -84,7 +98,32 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
             Box(Modifier.weight(1f)) {
                 AnimatedContent(
                     targetState = route,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
+                    transitionSpec = {
+                        val forward = targetState.depth() >= initialState.depth()
+                        val enter = if (forward) {
+                            slideInHorizontally(
+                                animationSpec = tween(320, easing = FastOutSlowInEasing),
+                                initialOffsetX = { it / 6 }
+                            ) + fadeIn(tween(220)) + scaleIn(
+                                initialScale = 0.96f,
+                                animationSpec = tween(320, easing = FastOutSlowInEasing)
+                            )
+                        } else {
+                            slideInHorizontally(
+                                animationSpec = tween(320, easing = FastOutSlowInEasing),
+                                initialOffsetX = { -it / 6 }
+                            ) + fadeIn(tween(220))
+                        }
+                        val exit = if (forward) {
+                            fadeOut(tween(160)) + scaleOut(targetScale = 0.98f, animationSpec = tween(200))
+                        } else {
+                            fadeOut(tween(160)) + slideOutHorizontally(
+                                animationSpec = tween(240, easing = FastOutSlowInEasing),
+                                targetOffsetX = { it / 8 }
+                            )
+                        }
+                        enter togetherWith exit
+                    },
                     label = "route"
                 ) { r ->
                     when (r) {
@@ -242,13 +281,18 @@ private fun BottomBar(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // 主按钮：我忍住了
+        val keepInteraction = rememberInteraction()
         Row(
             Modifier
                 .weight(1f)
                 .height(Dimens.buttonLarge)
+                .pressScale(keepInteraction, pressedScale = 0.96f)
                 .clip(RoundedCornerShape(Dimens.pillRadius))
                 .background(SuccessGreen)
-                .clickable {
+                .clickable(
+                    interactionSource = keepInteraction,
+                    indication = null
+                ) {
                     haptics.tick()
                     onKeep()
                 }

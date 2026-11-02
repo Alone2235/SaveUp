@@ -32,18 +32,22 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.eta.saveup.ui.theme.Dimens
+import kotlinx.coroutines.delay
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
- * 单列数字滚轮（LazyColumn + snapFlingBehavior 版）。
+ * 单列数字滚轮（LazyColumn + snapFlingBehavior，支持循环）。
  *
- * 滑动质感由 Compose 原生 fling + 吸附提供，这是最顺手的方案。
+ * 循环实现：
+ * - items 在内部重复 [LOOPS] 圈，初始定位到正中间那圈
+ * - 滑到靠近两端时静默 scrollToItem 到等价位置，视觉无缝
+ * - 对外始终只报告真实下标（0..items.size-1）
  *
- * 对齐说明：
- * - contentPadding 上下各留 [visibleCount]/2 行，使第 0 项一开始就在正中
- * - 选中项 = firstVisibleItemIndex + 滚动偏移换算出的整行，含偏移量误差，不会差半格
- * - 高亮带高度 == itemHeight 且垂直居中，与选中项天然重合
+ * 性能：所有行字号/字重/颜色固定，居中效果只在 graphicsLayer 绘制阶段算，滚动零重组。
  */
+private const val LOOPS = 7
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WheelColumn(
@@ -60,56 +64,75 @@ fun WheelColumn(
 ) {
     if (items.isEmpty()) return
 
+    val n = items.size
+    val looping = n > 1
+    val loops = if (looping) LOOPS else 1
+    val total = n * loops
+    val midLoop = loops / 2
+    val midStart = midLoop * n
+
     val centerOffset = visibleCount / 2
     val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = 0
+        initialFirstVisibleItemIndex = if (looping) midStart + selectedIndex else selectedIndex
     )
     val fling = rememberSnapFlingBehavior(lazyListState = listState)
     val itemHeightPx = with(LocalDensity.current) { itemHeight.toPx() }
-    val maxIndex = items.lastIndex
 
     var lastTick by remember { mutableIntStateOf(selectedIndex) }
 
-    // 当前居中的整数下标（考虑滚动偏移的进位）
-    fun currentIndex(): Int {
+    /** 当前居中位置对应的「真实下标」 */
+    fun currentRealIndex(): Int {
         val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-        return (listState.firstVisibleItemIndex + Math.round(fractional)).coerceIn(0, maxIndex)
+        val absolute = listState.firstVisibleItemIndex + fractional.roundToInt()
+        return if (looping) ((absolute % n) + n) % n else absolute.coerceIn(0, n - 1)
     }
 
-    // 震动：只在手指拖动阶段按时间节流触发，惯性滑行不震，避免打断手感
-    LaunchedEffect(listState) {
+    // 震动 + 选中回调
+    LaunchedEffect(listState, n) {
         var lastVibrateAt = 0L
         snapshotFlow {
             val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
-            val idx = (listState.firstVisibleItemIndex + Math.round(fractional)).coerceIn(0, maxIndex)
-            Triple(idx, listState.isScrollInProgress, listState.isScrollInProgress && !listState.canScrollBackward.not())
-        }.collect { (idx, scrolling, _) ->
-            if (idx == lastTick) return@collect
-            lastTick = idx
-            if (!scrolling) return@collect
-
-            val now = System.currentTimeMillis()
-            // 45ms 节流：快速滑动时不会连成一片，慢速拨动依然一格一响
-            if (now - lastVibrateAt >= 45L) {
-                lastVibrateAt = now
-                haptics?.wheel()
+            val absolute = listState.firstVisibleItemIndex + fractional.roundToInt()
+            val real = if (looping) ((absolute % n) + n) % n else absolute.coerceIn(0, n - 1)
+            real to listState.isScrollInProgress
+        }.collect { (real, scrolling) ->
+            if (real != lastTick) {
+                lastTick = real
+                if (scrolling) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastVibrateAt >= 45L) {
+                        lastVibrateAt = now
+                        haptics?.wheel()
+                    }
+                }
             }
+            if (!scrolling) onSelected(real)
         }
     }
 
-    // 滚动停止 → 回调选中值
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }
-            .collect { scrolling ->
-                if (!scrolling) onSelected(currentIndex())
+    // 循环边界静默归位：滑到第一/最后一圈时跳回中间圈
+    LaunchedEffect(listState, n, loops) {
+        if (!looping) return@LaunchedEffect
+        snapshotFlow { listState.firstVisibleItemIndex }
+            .collect { idx ->
+                when {
+                    idx < n -> listState.scrollToItem(idx + n * (loops - 2))
+                    idx >= n * (loops - 1) -> listState.scrollToItem(idx - n * (loops - 2))
+                }
             }
     }
 
-    // 外部改值 → 滚过去
-    LaunchedEffect(selectedIndex, items.size) {
+    // 外部改值 → 平滑滚到对应位置
+    LaunchedEffect(selectedIndex, n) {
         if (selectedIndex in items.indices) {
-            if (listState.firstVisibleItemIndex != selectedIndex) {
-                listState.scrollToItem(selectedIndex)
+            val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
+            val currentReal = if (looping)
+                (((listState.firstVisibleItemIndex + fractional.roundToInt()) % n) + n) % n
+            else listState.firstVisibleItemIndex
+
+            if (currentReal != selectedIndex) {
+                val target = if (looping) midStart + selectedIndex else selectedIndex
+                listState.animateScrollToItem(target)
                 lastTick = selectedIndex
             }
         }
@@ -121,7 +144,7 @@ fun WheelColumn(
             .height(itemHeight * visibleCount)
             .clip(RoundedCornerShape(Dimens.controlRadius))
     ) {
-        // 中央选中带（高度与一行一致，垂直居中）
+        // 中央选中带
         Box(
             Modifier
                 .align(Alignment.Center)
@@ -139,8 +162,8 @@ fun WheelColumn(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(vertical = itemHeight * centerOffset)
         ) {
-            items(items.size) { index ->
-                // 字号/字重/颜色全部固定，滚动时只改 graphicsLayer，不触发重新测量
+            items(total) { absIndex ->
+                val realIndex = if (looping) absIndex % n else absIndex
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -148,17 +171,16 @@ fun WheelColumn(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = items[index],
+                        text = items[realIndex],
                         fontSize = textSize.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = activeColor,
                         textAlign = TextAlign.Center,
                         maxLines = 1,
                         modifier = Modifier.graphicsLayer {
-                            // 用 listState 计算与中央的距离（只在绘制阶段读取，开销极低）
                             val fractional = listState.firstVisibleItemScrollOffset / itemHeightPx
                             val center = listState.firstVisibleItemIndex + fractional
-                            val distance = abs(index - center)
+                            val distance = abs(absIndex - center)
                             val centered = distance < 0.5f
 
                             val scale = if (centered) 1f else (1f - distance * 0.09f).coerceIn(0.66f, 1f)

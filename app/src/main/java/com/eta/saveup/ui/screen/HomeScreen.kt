@@ -22,6 +22,8 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -35,6 +37,8 @@ import androidx.compose.ui.unit.dp
 import com.eta.saveup.data.repo.GoalView
 import com.eta.saveup.ui.UiState
 import com.eta.saveup.ui.component.GoalCard
+import com.eta.saveup.ui.component.pressScale
+import com.eta.saveup.ui.component.rememberInteraction
 import com.eta.saveup.ui.component.HapticsWrapper
 import com.eta.saveup.ui.component.PillTag
 import com.eta.saveup.ui.component.ProgressRing
@@ -166,15 +170,20 @@ fun HomeScreen(
 @Composable
 private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Unit) {
     val done = view.achieved
+    val interaction = rememberInteraction()
     Box(
         Modifier
             .fillMaxWidth()
+            .pressScale(interaction, pressedScale = 0.98f)
             .clip(RoundedCornerShape(Dimens.panelRadius))
             .background(
                 if (done) Brush.linearGradient(listOf(Color(0xFFFFF8E6), Color(0xFFFFF2D4)))
                 else Brush.linearGradient(listOf(Color.White, Color(0xFFF8FAFF)))
             )
-            .clickable { haptics.tick(); onClick() }
+            .clickable(
+                interactionSource = interaction,
+                indication = null
+            ) { haptics.tick(); onClick() }
             .padding(Dimens.gap24)
     ) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -197,8 +206,13 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
 
             ProgressRing(progress = view.progress) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val percentAnim by animateFloatAsState(
+                        targetValue = view.progress * 100f,
+                        animationSpec = tween(650),
+                        label = "percent"
+                    )
                     Text(
-                        text = "${(view.progress * 100).toInt()}%",
+                        text = "${percentAnim.toInt()}%",
                         fontSize = Fonts.amountHuge,
                         fontWeight = FontWeight.Bold,
                         color = if (done) GoldAccent else HyperBlue
