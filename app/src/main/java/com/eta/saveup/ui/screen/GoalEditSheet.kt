@@ -48,6 +48,7 @@ private val EMOJI_CHOICES = listOf(
 /**
  * 新建 / 编辑目标。existing 为 null 时是新建。
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun GoalEditSheet(
     existing: Goal?,

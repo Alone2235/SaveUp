@@ -47,6 +47,7 @@ import com.eta.saveup.ui.theme.SuccessGreen
 /**
  * 记一笔攒钱 / 记一笔花销 的底部弹层。
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun DepositSheet(
     goals: List<GoalView>,
