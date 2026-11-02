@@ -12,6 +12,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -33,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withFrameNanos
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -75,16 +75,9 @@ fun WheelColumn(
         if (abs(position - target) > 0.01f) {
             animJob[0]?.cancel()
             animJob[0] = scope.launch {
-                animateTo(position, target) { position = it }
+                animatePosition(position, target) { position = it }
                 onSel.value(target.roundToInt())
             }
-        }
-    }
-
-    suspend fun animateTo(from: Float, target: Float, set: (Float) -> Unit) {
-        val anim = Animatable(from)
-        anim.animateTo(target, spring(stiffness = 620f, dampingRatio = 0.85f)) {
-            set(value)
         }
     }
 
@@ -108,7 +101,7 @@ fun WheelColumn(
 
     suspend fun settle() {
         val target = position.roundToInt().coerceIn(0, maxIndex).toFloat()
-        animateTo(position, target) { position = it }
+        animatePosition(position, target) { position = it }
         onSel.value(target.roundToInt())
     }
 
@@ -227,5 +220,13 @@ private fun WheelContent(
                 p.place(x = 0, y = (elementCenter - p.height / 2f).roundToInt())
             }
         }
+    }
+}
+
+/** 带吸附感的滚动动画 */
+private suspend fun animatePosition(from: Float, target: Float, set: (Float) -> Unit) {
+    val anim = Animatable(from)
+    anim.animateTo(target, spring(stiffness = 620f, dampingRatio = 0.85f)) {
+        set(value)
     }
 }
