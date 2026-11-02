@@ -1,6 +1,8 @@
 package com.eta.saveup.ui.component
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.exponentialDecay
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,20 +14,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -41,8 +43,9 @@ import kotlin.math.roundToInt
 /**
  * 单列数字滚轮。
  *
- * 位置用 [MutableFloatState] 承载（单位：行），拖动/惯性/吸附共写同一状态，
- * 避免闭包捕获快照导致方向或数值不同步。
+ * 关键设计：拖动期间只写普通 Float 状态（同步、零协程），保证跟手；
+ * 松手后才交给 [Animatable] + [exponentialDecay] 做原生惯性，最后 spring 吸附整行。
+ * 惯性物理和 LazyColumn 的 fling 同源，所以手感一致。
  */
 @Composable
 fun WheelColumn(
@@ -63,21 +66,22 @@ fun WheelColumn(
     val itemPx = with(density) { itemHeight.toPx() }
     val maxIndex = items.lastIndex
 
-    val posState: MutableFloatState = remember {
-        mutableFloatStateOf(selectedIndex.coerceIn(0, maxIndex).toFloat())
-    }
+    // 唯一的位置来源：行（浮点）
+    var position by remember { mutableFloatStateOf(selectedIndex.coerceIn(0, maxIndex).toFloat()) }
+
     val scope = rememberCoroutineScope()
     val hap = rememberUpdatedState(haptics)
     val onSel = rememberUpdatedState(onSelected)
     val animJob = remember { arrayOfNulls<Job>(1) }
+    var lastTickIdx = selectedIndex
 
+    // 外部值变化 → 归位
     LaunchedEffect(selectedIndex) {
         val target = selectedIndex.coerceIn(0, maxIndex).toFloat()
-        if (abs(posState.floatValue - target) > 0.01f) {
+        if (abs(position - target) > 0.01f) {
             animJob[0]?.cancel()
             animJob[0] = scope.launch {
-                animatePosition(posState, target)
-                onSel.value(posState.floatValue.roundToInt())
+                animatePosition(position, target) { position = it }
             }
         }
     }
@@ -88,51 +92,39 @@ fun WheelColumn(
             .height(itemHeight * visibleCount)
             .clip(RoundedCornerShape(12.dp))
             .pointerInput(maxIndex, itemPx) {
-                // 采样窗口：记录最近 80ms 内（时间, 位置）用于算速度
-                var winStartTime = 0L
-                var winStartPos = 0f
+                val tracker = VelocityTracker()
 
                 detectDragGestures(
                     onDragStart = {
                         animJob[0]?.cancel()
-                        winStartTime = System.nanoTime()
-                        winStartPos = posState.floatValue
+                        tracker.resetTracking()
                     },
                     onDragEnd = {
-                        val now = System.nanoTime()
-                        val dtMs = (now - winStartTime) / 1_000_000f
-                        val dLines = posState.floatValue - winStartPos
-                        // 每帧(16.6ms)行数，符号与 posState 增量一致
-                        val v0 = if (dtMs > 16f) dLines / dtMs * 16.6f else 0f
+                        val vY = tracker.calculateVelocity().y // px/s，向下为正
+                        val vLines = -vY / itemPx              // 行/秒，上滑为正
 
                         animJob[0] = scope.launch {
-                            if (abs(v0) > 0.02f) {
-                                fling(posState, v0, maxIndex) { hap.value?.wheel() }
+                            if (abs(vLines) > 40f) {
+                                position = decayTo(position, vLines, maxIndex)
                             }
-                            settle(posState, maxIndex)
-                            onSel.value(posState.floatValue.roundToInt())
+                            val target = position.roundToInt().coerceIn(0, maxIndex).toFloat()
+                            animatePosition(position, target) { position = it }
+                            onSel.value(target.roundToInt())
                         }
                     },
                     onDragCancel = {
                         animJob[0] = scope.launch {
-                            settle(posState, maxIndex)
-                            onSel.value(posState.floatValue.roundToInt())
+                            val target = position.roundToInt().coerceIn(0, maxIndex).toFloat()
+                            animatePosition(position, target) { position = it }
+                            onSel.value(target.roundToInt())
                         }
                     }
                 ) { change, dragAmount ->
                     change.consume()
-
-                    // 每 60ms 滑动采样窗口起点，保证速度反映"最近"的手感
-                    val now = System.nanoTime()
-                    if ((now - winStartTime) / 1_000_000f > 60f) {
-                        winStartTime = now
-                        winStartPos = posState.floatValue
-                    }
-
-                    // 手指上滑(dy<0) → 索引增大
-                    val deltaLines = -dragAmount.y / itemPx
-                    posState.floatValue =
-                        (posState.floatValue + deltaLines).coerceIn(0f, maxIndex.toFloat())
+                    tracker.addPointerInputChange(change)
+                    // 手指上滑(dy<0) → 索引增大；同步写入状态，立刻重组
+                    position = (position - dragAmount.y / itemPx)
+                        .coerceIn(0f, maxIndex.toFloat())
                 }
             }
     ) {
@@ -148,7 +140,7 @@ fun WheelColumn(
 
         WheelContent(
             items = items,
-            position = posState.floatValue,
+            position = position,
             itemHeightPx = itemPx,
             visibleCount = visibleCount,
             textSize = textSize,
@@ -156,42 +148,43 @@ fun WheelColumn(
             inactiveColor = inactiveColor
         )
     }
-}
 
-/** 惯性：v0 为每帧行数（正=索引增大） */
-private suspend fun fling(
-    pos: MutableFloatState,
-    v0: Float,
-    maxIndex: Int,
-    onTick: () -> Unit
-) {
-    var v = v0
-    var lastIdx = pos.floatValue.roundToInt()
-    while (abs(v) > 0.01f) {
-        withFrameNanos { }
-        val current = pos.floatValue
-        val next = (current + v).coerceIn(0f, maxIndex.toFloat())
-        if ((next <= 0f && v < 0f) || (next >= maxIndex.toFloat() && v > 0f)) v = 0f
-        pos.floatValue = next
-        val idx = pos.floatValue.roundToInt()
-        if (idx != lastIdx) {
-            lastIdx = idx
-            onTick()
+    // 每跨过一整行给一次齿感
+    LaunchedEffect(position) {
+        val idx = position.roundToInt()
+        if (idx != lastTickIdx) {
+            lastTickIdx = idx
+            hap.value?.wheel()
         }
-        v *= 0.93f
     }
 }
 
-private suspend fun settle(pos: MutableFloatState, maxIndex: Int) {
-    val target = pos.floatValue.roundToInt().coerceIn(0, maxIndex).toFloat()
-    if (abs(pos.floatValue - target) < 0.01f) return
-    animatePosition(pos, target)
+/** 用指数衰减跑惯性，返回最终位置 */
+private suspend fun decayTo(
+    from: Float,
+    velocityLinesPerSec: Float,
+    maxIndex: Int
+): Float {
+    val anim = Animatable(from)
+    anim.animateDecay(
+        initialVelocity = velocityLinesPerSec,
+        animationSpec = exponentialDecay(frictionMultiplier = 1.6f)
+    ) {
+        if (value < 0f || value > maxIndex) {
+            // 撞到边界直接停
+            this.cancelAnimation()
+        }
+    }
+    return anim.value.coerceIn(0f, maxIndex.toFloat())
 }
 
-private suspend fun animatePosition(pos: MutableFloatState, target: Float) {
-    val anim = Animatable(pos.floatValue)
-    anim.animateTo(target, spring(stiffness = 620f, dampingRatio = 0.85f)) {
-        pos.floatValue = value
+private suspend fun animatePosition(from: Float, target: Float, set: (Float) -> Unit) {
+    val anim = Animatable(from)
+    anim.animateTo(
+        target,
+        spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
+    ) {
+        set(value)
     }
 }
 

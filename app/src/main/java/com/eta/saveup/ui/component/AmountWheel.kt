@@ -151,7 +151,7 @@ fun AmountWheel(
                         haptics?.success()
                         editing = false
                     }
-                    .padding(vertical = Dimens.gap10),
+                    .padding(vertical = Dimens.gap8),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
