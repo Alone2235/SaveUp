@@ -47,13 +47,14 @@ import com.eta.saveup.ui.theme.Space
 /**
  * 金额录入。
  *
- * 设计取舍（踩过坑之后的结论）：
+ * 数位分列：万 / 千 / 百 / 十 / 元 . 角 / 分，七列全部保留。
  *
- * 1. 顶部大字是主入口，点开系统数字键盘直接输，1.5 / 1.8 / 88.88 都是打几下完事。
- * 2. 滚轮只保留 [元] 和 [角] 两列 —— 没人会用滚轮拨到「分」，
- *    而多出来的列只会带来残值污染和串位问题。
- * 3. 滚轮是非受控组件：只在自己被拨动时改值，外部改值靠重建（rev）。
- * 4. 任何一位变化都即时上报完整金额，不做延迟合并。
+ * 万、千、百默认折叠 —— 但**折叠即清零**：
+ * 收起高位的瞬间把那几位写回 0，并把金额同步上报。
+ * 这样既不会出现「收起后残值污染下次输入」的老问题，
+ * 也不会为了绕 bug 把列合并掉。
+ *
+ * 顶部大字可直接点开键盘输入，含分位的精确金额走这条路。
  */
 @Composable
 fun AmountWheel(
@@ -69,20 +70,32 @@ fun AmountWheel(
 ) {
     val clamped = amountCent.coerceIn(0L, maxCent)
 
-    // 滚轮的唯一两个维度：整元（0..999）+ 角（0..9）
-    var yuan by remember { mutableIntStateOf(((clamped / 100) % 1000).toInt()) }
-    var jiao by remember { mutableIntStateOf(((clamped / 10) % 10).toInt()) }
-    var rev by remember { mutableIntStateOf(0) }
+    var wan by remember { mutableIntStateOf((clamped / 1_000_000L % 10).toInt()) }
+    var qian by remember { mutableIntStateOf((clamped / 100_000L % 10).toInt()) }
+    var bai by remember { mutableIntStateOf((clamped / 10_000L % 10).toInt()) }
+    var shi by remember { mutableIntStateOf((clamped / 1_000L % 10).toInt()) }
+    var yuan by remember { mutableIntStateOf((clamped / 100L % 10).toInt()) }
+    var jiao by remember { mutableIntStateOf((clamped / 10L % 10).toInt()) }
+    var fen by remember { mutableIntStateOf((clamped % 10L).toInt()) }
 
     var displayCent by remember { mutableLongStateOf(clamped) }
     var lastSeen by remember { mutableLongStateOf(clamped) }
+
+    // 高位是否展开
+    var highExpanded by remember { mutableStateOf(clamped >= 10_000L) }
 
     var editing by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
 
-    fun emit(newYuan: Int, newJiao: Int) {
-        val cent = newYuan * 100L + newJiao * 10L
+    fun calcCent(w: Int = wan, q: Int = qian, b: Int = bai, s: Int = shi,
+                 y: Int = yuan, j: Int = jiao, f: Int = fen): Long =
+        w * 1_000_000L + q * 100_000L + b * 10_000L +
+            s * 1_000L + y * 100L + j * 10L + f
+
+    /** 上报当前完整金额 */
+    fun push(cent: Long = calcCent()) {
+        if (cent == displayCent) return
         displayCent = cent
         lastSeen = cent
         onAmountChange(cent)
@@ -91,17 +104,37 @@ fun AmountWheel(
     /** 外部整体赋值（键盘输入） */
     fun applyExternal(cent: Long) {
         val c = cent.coerceIn(0L, maxCent)
-        yuan = ((c / 100) % 1000).toInt()
-        jiao = ((c / 10) % 10).toInt()
+        wan = (c / 1_000_000L % 10).toInt()
+        qian = (c / 100_000L % 10).toInt()
+        bai = (c / 10_000L % 10).toInt()
+        shi = (c / 1_000L % 10).toInt()
+        yuan = (c / 100L % 10).toInt()
+        jiao = (c / 10L % 10).toInt()
+        fen = (c % 10L).toInt()
+        if (c >= 10_000L) highExpanded = true
         displayCent = c
-        rev++
+    }
+
+    /** 收起高位：先清零再收起，避免残值留在内存里 */
+    fun collapseHigh() {
+        if (!highExpanded) return
+        if (wan != 0 || qian != 0 || bai != 0) {
+            wan = 0; qian = 0; bai = 0
+            push(calcCent(w = 0, q = 0, b = 0))
+        }
+        highExpanded = false
+    }
+
+    /** 展开高位：按当前金额定位，不携带脏值 */
+    fun expandHigh() {
+        if (highExpanded) return
+        highExpanded = true
     }
 
     LaunchedEffect(clamped) {
         if (clamped != lastSeen) {
             lastSeen = clamped
-            val local = yuan * 100L + jiao * 10L
-            if (clamped != local) applyExternal(clamped)
+            if (clamped != calcCent()) applyExternal(clamped)
         }
     }
 
@@ -113,7 +146,7 @@ fun AmountWheel(
     }
 
     Column(modifier.fillMaxWidth()) {
-        // ---- 顶部金额条：点开键盘 ----
+        // ---- 顶部金额：点开键盘 ----
         Row(
             Modifier
                 .fillMaxWidth()
@@ -137,12 +170,7 @@ fun AmountWheel(
                             val filtered = raw.filter { it.isDigit() || it == '.' }
                             if (filtered.length <= 12) {
                                 editText = filtered
-                                parseCent(filtered)?.let {
-                                    val c = it.coerceIn(0, maxCent)
-                                    displayCent = c
-                                    lastSeen = c
-                                    onAmountChange(c)
-                                }
+                                parseCent(filtered)?.let { applyExternal(it) }
                             }
                         },
                         singleLine = true,
@@ -181,8 +209,6 @@ fun AmountWheel(
                     .background(accent)
                     .clickable {
                         haptics?.success()
-                        // 键盘输入的金额可能含分，需要让滚轮跟着重建
-                        applyExternal(displayCent)
                         editing = false
                     }
                     .padding(vertical = Space.xs),
@@ -198,73 +224,122 @@ fun AmountWheel(
         } else {
             Spacer(Modifier.height(Space.sm))
 
+            // 展开后列多，权重相应收窄；收起时留白更多
+            val cellWeight = if (highExpanded) 0.86f else 1.12f
+
             Row(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Space.sm)
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                // 元：0..999
-                WheelCell(weight = 1.6f) {
-                    key(rev) {
-                        WheelColumn(
-                            items = (0..999).map { it.toString() },
-                            initialIndex = yuan.coerceIn(0, 999),
-                            onSelected = { v ->
-                                yuan = v
-                                emit(yuan, jiao)
-                            },
-                            itemHeight = 44.dp,
-                            visibleCount = 3,
-                            textSize = 26,
-                            haptics = haptics
-                        )
+                if (highExpanded) {
+                    DigitCell(wan, "万", cellWeight, haptics) { v ->
+                        wan = v; push(calcCent(w = v))
+                    }
+                    DigitCell(qian, "千", cellWeight, haptics) { v ->
+                        qian = v; push(calcCent(q = v))
+                    }
+                    DigitCell(bai, "百", cellWeight, haptics) { v ->
+                        bai = v; push(calcCent(b = v))
                     }
                 }
-                LabelCell()
 
+                DigitCell(shi, "十", cellWeight, haptics) { v ->
+                    shi = v; push(calcCent(s = v))
+                }
+                DigitCell(yuan, "元", cellWeight, haptics) { v ->
+                    yuan = v; push(calcCent(y = v))
+                }
+
+                DotCell()
+
+                DigitCell(jiao, "角", cellWeight, haptics) { v ->
+                    jiao = v; push(calcCent(j = v))
+                }
+                DigitCell(fen, "分", cellWeight, haptics) { v ->
+                    fen = v; push(calcCent(f = v))
+                }
+            }
+
+            Spacer(Modifier.height(Space.xs))
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(Radius.pill))
+                    .background(accent.copy(alpha = 0.08f))
+                    .clickable {
+                        haptics?.tick()
+                        if (highExpanded) collapseHigh() else expandHigh()
+                    }
+                    .padding(horizontal = Space.sm, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = ".",
-                    fontSize = 26.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = activeColor,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.width(10.dp)
+                    text = if (highExpanded) "收起千位 / 万位" else "展开千位 / 万位",
+                    fontSize = Fonts.micro,
+                    color = accent,
+                    fontWeight = FontWeight.Medium
                 )
-
-                // 角：0..9
-                WheelCell(weight = 0.9f) {
-                    key(rev) {
-                        WheelColumn(
-                            items = (0..9).map { it.toString() },
-                            initialIndex = jiao.coerceIn(0, 9),
-                            onSelected = { v ->
-                                jiao = v
-                                emit(yuan, jiao)
-                            },
-                            itemHeight = 44.dp,
-                            visibleCount = 3,
-                            textSize = 26,
-                            haptics = haptics
-                        )
-                    }
-                }
-                LabelCell()
             }
         }
     }
 }
 
+/** 单个数位列：滚轮 + 下方单位标签，各列等高 */
 @Composable
-private fun RowScope.WheelCell(weight: Float, content: @Composable () -> Unit) {
+private fun RowScope.DigitCell(
+    value: Int,
+    label: String,
+    weight: Float,
+    haptics: HapticsWrapper?,
+    onValue: (Int) -> Unit
+) {
     Box(Modifier.weight(weight)) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) { content() }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // 非受控滚轮：内部只在自身被拨动时回调
+            key(label) {
+                WheelColumn(
+                    items = (0..9).map { it.toString() },
+                    initialIndex = value,
+                    onSelected = onValue,
+                    itemHeight = 44.dp,
+                    visibleCount = 3,
+                    textSize = 26,
+                    haptics = haptics
+                )
+            }
+            Spacer(Modifier.height(Space.xxs))
+            Text(
+                text = label,
+                fontSize = 10.sp,
+                color = Color(0xFF878D99),
+                maxLines = 1
+            )
+        }
     }
 }
 
-/** 占位，保证每列下方对齐（滚轮没有标签） */
+/** 小数点：与数字列等高，垂直居中 */
 @Composable
-private fun RowScope.LabelCell() {
-    Box(Modifier.width(Space.xxs).height(1.dp))
+private fun DotCell() {
+    Column(Modifier.width(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.height(44.dp * 3f),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = ".",
+                fontSize = 26.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF1B1F27)
+            )
+        }
+        Spacer(Modifier.height(Space.xxs))
+        Text(
+            text = " ",
+            fontSize = 10.sp,
+            maxLines = 1
+        )
+    }
 }
 
 private fun formatInput(cent: Long): String {
