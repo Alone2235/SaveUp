@@ -92,8 +92,7 @@ fun SettingsScreen(
         item { SectionTitle("总览") }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
-                InfoTile("已锁定", formatYuanInt(state.totalSettledCent), SuccessGreen, Modifier.weight(1f))
-                InfoTile("待转入", formatYuanInt(state.pendingSumCent), WarnOrange, Modifier.weight(1f))
+                InfoTile("累计攒下", formatYuanInt(state.totalSettledCent), SuccessGreen, Modifier.weight(1f))
             }
         }
         item {
@@ -102,27 +101,6 @@ fun SettingsScreen(
                 InfoTile("已达成", "${state.doneGoals.size}", GoldAccent, Modifier.weight(1f))
             }
         }
-        item {
-            SurfaceCard {
-                Column {
-                    Text(
-                        text = "关于「待转入」",
-                        fontSize = Fonts.caption,
-                        fontWeight = FontWeight.Medium,
-                        color = IosWhite.copy(alpha = TextAlpha.secondary)
-                    )
-                    Spacer(Modifier.height(Space.xxs))
-                    Text(
-                        text = "「留着」只是记了个决定，钱还在你手上。" +
-                            "真的把钱转到一个不好取的地方之后，回到 App 点「已转入」，" +
-                            "这笔才计入目标。没转走的不算数。",
-                        fontSize = Fonts.micro,
-                        color = IosWhite.copy(alpha = TextAlpha.tertiary)
-                    )
-                }
-            }
-        }
-
         item { SectionTitle("偏好") }
         item {
             SurfaceCard(padding = PaddingValues(Space.md)) {

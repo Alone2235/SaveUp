@@ -36,8 +36,6 @@ class SaveRepository(private val db: AppDatabase) {
     val goals: Flow<List<Goal>> = goalDao.observeAll()
     val allEntries: Flow<List<Entry>> = entryDao.observeAll()
     val totalSettled: Flow<Long> = entryDao.observeTotalSettled().map { it ?: 0L }
-    val pendingSum: Flow<Long> = entryDao.observePendingSum().map { it ?: 0L }
-    val pendingCount: Flow<Int> = entryDao.observePendingCount()
 
     /** 最近 90 天每日汇总，直接从 entries 聚合 */
     val recentDaily: Flow<List<DailyStat>> =
@@ -83,7 +81,7 @@ class SaveRepository(private val db: AppDatabase) {
         amountCent: Long,
         title: String,
         kept: Boolean,
-        settled: Boolean = false
+        settled: Boolean = true
     ) {
         if (amountCent <= 0) return
 
@@ -97,29 +95,6 @@ class SaveRepository(private val db: AppDatabase) {
             )
         )
         goalId?.let { refreshGoalStatus(it) }
-    }
-
-    /** 标记若干笔记录为「已转入」 */
-    suspend fun settleEntries(ids: List<Long>) {
-        ids.forEach { id ->
-            val e = entryDao.get(id) ?: return@forEach
-            if (e.decision == Entry.KEPT && e.settleState == Entry.UNSETTLED) {
-                entryDao.update(e.copy(settleState = Entry.SETTLED))
-            }
-        }
-        // 目标状态可能因此变化
-        goalDao.getAll().forEach { refreshGoalStatus(it.id) }
-    }
-
-    /** 把所有未落地的保留记录一次性标记为已转入 */
-    suspend fun settleAllPending() {
-        val ids = entryDao.pendingKeptIds()
-        ids.forEach { id ->
-            val e = entryDao.get(id) ?: return@forEach
-            entryDao.update(e.copy(settleState = Entry.SETTLED))
-        }
-        // 目标状态可能因此变化
-        goalDao.getAll().forEach { refreshGoalStatus(it.id) }
     }
 
     suspend fun deleteEntry(id: Long) {
@@ -139,7 +114,7 @@ class SaveRepository(private val db: AppDatabase) {
         if (goal.status == Goal.ARCHIVED) return
 
         val sum = entryDao.getByGoal(goalId)
-            .filter { it.decision == Entry.KEPT && it.settleState == Entry.SETTLED }
+            .filter { it.decision == Entry.KEPT }
             .sumOf { it.amountCent }
 
         val newStatus = if (sum >= goal.targetCent) Goal.DONE else Goal.ACTIVE

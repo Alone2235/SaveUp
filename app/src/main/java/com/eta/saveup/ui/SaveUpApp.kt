@@ -27,7 +27,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ShoppingCart
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -49,7 +49,7 @@ import com.eta.saveup.data.db.Goal
 import com.eta.saveup.ui.component.pressScale
 import com.eta.saveup.ui.component.rememberHaptics
 import com.eta.saveup.ui.component.rememberInteraction
-import com.eta.saveup.ui.screen.DecideSheet
+import com.eta.saveup.ui.screen.KeepSheet
 import com.eta.saveup.ui.screen.GoalDetailScreen
 import com.eta.saveup.ui.screen.GoalEditSheet
 import com.eta.saveup.ui.screen.HomeScreen
@@ -78,7 +78,7 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
     val haptics = rememberHaptics(state.haptics)
 
     var route by remember { mutableStateOf<Route>(Route.Home) }
-    var showDecide by remember { mutableStateOf(false) }
+    var showKeep by remember { mutableStateOf(false) }
     var editGoal by remember { mutableStateOf<Goal?>(null) }
     var showNewGoal by remember { mutableStateOf(false) }
     var confirmDeleteGoal by remember { mutableStateOf<Goal?>(null) }
@@ -128,8 +128,7 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
                             haptics = haptics,
                             onGoalClick = { gv -> route = Route.Detail(gv.goal.id) },
                             onNewGoal = { showNewGoal = true },
-                            onSettings = { route = Route.Settings },
-                            onSettle = { vm.settleAll() }
+                            onSettings = { route = Route.Settings }
                         )
 
                         is Route.Settings -> SettingsScreen(
@@ -154,7 +153,7 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
                                     onDelete = { confirmDeleteGoal = gv.goal },
                                     onArchive = { vm.archiveGoal(gv.goal) },
                                     onRestore = { vm.restoreGoal(gv.goal) },
-                                    onDecide = { showDecide = true },
+                                    onDecide = { showKeep = true },
                                     onDeleteEntry = { vm.deleteEntry(it) }
                                 )
                             }
@@ -164,25 +163,21 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
             }
 
             if (route == Route.Home) {
-                DecideBar(haptics) { showDecide = true }
+                KeepBar(haptics) { showKeep = true }
             }
         }
     }
 
-    // ---- 决定页 ----
-    if (showDecide) {
-        DecideSheet(
+    // ---- 记一笔 ----
+    if (showKeep) {
+        KeepSheet(
             goals = sheetGoals,
             haptics = haptics,
             initialGoalId = (route as? Route.Detail)?.goalId,
-            onDismiss = { showDecide = false },
-            onKeep = { gid, cent, title ->
-                vm.recordKept(gid, cent, title)
-                showDecide = false
-            },
-            onBuy = { gid, cent, title ->
-                vm.recordBought(gid, cent, title)
-                showDecide = false
+            onDismiss = { showKeep = false },
+            onConfirm = { gid, cent ->
+                vm.recordKept(gid, cent, "")
+                showKeep = false
             }
         )
     }
@@ -236,9 +231,9 @@ fun SaveUpApp(vm: MainViewModel = viewModel()) {
     }
 }
 
-/** 底部唯一入口：想买点什么 */
+/** 底部唯一入口：我忍住了 */
 @Composable
-private fun DecideBar(haptics: com.eta.saveup.ui.component.HapticsWrapper, onClick: () -> Unit) {
+private fun KeepBar(haptics: com.eta.saveup.ui.component.HapticsWrapper, onClick: () -> Unit) {
     val interaction = rememberInteraction()
     Row(
         Modifier
@@ -252,7 +247,7 @@ private fun DecideBar(haptics: com.eta.saveup.ui.component.HapticsWrapper, onCli
                 .height(56.dp)
                 .pressScale(interaction, 0.97f)
                 .clip(RoundedCornerShape(Radius.pill))
-                .background(HyperBlue)
+                .background(com.eta.saveup.ui.theme.SuccessGreen)
                 .clickable(
                     interactionSource = interaction,
                     indication = null
@@ -264,14 +259,14 @@ private fun DecideBar(haptics: com.eta.saveup.ui.component.HapticsWrapper, onCli
             horizontalArrangement = Arrangement.Center
         ) {
             Icon(
-                Icons.Rounded.ShoppingCart,
+                Icons.Rounded.Favorite,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(20.dp)
             )
             Spacer(Modifier.width(Space.xs))
             Text(
-                text = "想买点什么",
+                text = "我忍住了",
                 fontSize = Fonts.bodyStrong,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White

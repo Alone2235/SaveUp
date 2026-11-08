@@ -19,8 +19,6 @@ data class UiState(
     val goals: List<GoalView> = emptyList(),
     val entries: List<Entry> = emptyList(),
     val totalSettledCent: Long = 0,
-    val pendingSumCent: Long = 0,
-    val pendingCount: Int = 0,
     val streak: Int = 0,
     val todayKeptCent: Long = 0,
     val haptics: Boolean = true
@@ -50,12 +48,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             repo.totalSettled.collect { s -> _ui.value = _ui.value.copy(totalSettledCent = s) }
         }
         viewModelScope.launch {
-            repo.pendingSum.collect { s -> _ui.value = _ui.value.copy(pendingSumCent = s) }
-        }
-        viewModelScope.launch {
-            repo.pendingCount.collect { c -> _ui.value = _ui.value.copy(pendingCount = c) }
-        }
-        viewModelScope.launch {
             repo.recentDaily.collect { list ->
                 val today = SaveRepository.todayKey()
                 _ui.value = _ui.value.copy(
@@ -76,12 +68,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun recordBought(goalId: Long?, amountCent: Long, title: String) =
         viewModelScope.launch { repo.recordDecision(goalId, amountCent, title, kept = false) }
-
-    /** 把某笔标记为已转入 */
-    fun settle(id: Long) = viewModelScope.launch { repo.settleEntries(listOf(id)) }
-
-    /** 全部未落地的标记为已转入 */
-    fun settleAll() = viewModelScope.launch { repo.settleAllPending() }
 
     fun deleteEntry(id: Long) = viewModelScope.launch { repo.deleteEntry(id) }
 

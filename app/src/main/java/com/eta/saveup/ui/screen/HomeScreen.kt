@@ -64,8 +64,7 @@ fun HomeScreen(
     haptics: HapticsWrapper,
     onGoalClick: (GoalView) -> Unit,
     onNewGoal: () -> Unit,
-    onSettings: () -> Unit,
-    onSettle: () -> Unit
+    onSettings: () -> Unit
 ) {
     val primary = state.activeGoals.firstOrNull() ?: state.doneGoals.firstOrNull()
 
@@ -125,11 +124,6 @@ fun HomeScreen(
             }
         }
 
-        // ---- 待转入提示 ----
-        if (state.pendingCount > 0) {
-            item { PendingCard(state, onSettle, haptics) }
-        }
-
         // ---- 主目标 ----
         item {
             if (primary != null) {
@@ -160,54 +154,6 @@ fun HomeScreen(
         item {
             Spacer(Modifier.height(Space.xs))
             NewGoalButton(onNewGoal, haptics)
-        }
-    }
-}
-
-/** 待转入：这些钱还没真的转走，不算数 */
-@Composable
-private fun PendingCard(state: UiState, onSettle: () -> Unit, haptics: HapticsWrapper) {
-    val interaction = rememberInteraction()
-    SurfaceCard(modifier = Modifier.pressScale(interaction, 0.98f)) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .clickable(
-                    interactionSource = interaction,
-                    indication = null
-                ) { haptics.tick(); onSettle() }
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .clip(RoundedCornerShape(Radius.small))
-                        .background(WarnOrange.copy(alpha = 0.14f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("!", fontSize = Fonts.caption, color = WarnOrange, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.width(Space.xs))
-                Text(
-                    text = "有 ${state.pendingCount} 笔待转入",
-                    fontSize = Fonts.caption,
-                    fontWeight = FontWeight.Medium,
-                    color = IosWhite
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = formatYuan(state.pendingSumCent),
-                    fontSize = Fonts.caption,
-                    fontWeight = FontWeight.SemiBold,
-                    color = WarnOrange
-                )
-            }
-            Spacer(Modifier.height(Space.xxs))
-            Text(
-                text = "钱还在你手上，转走之后点一下才算数 · 点此全部标记已转入",
-                fontSize = Fonts.micro,
-                color = IosWhite.copy(alpha = TextAlpha.tertiary)
-            )
         }
     }
 }
@@ -314,7 +260,7 @@ private fun FocusCard(view: GoalView, haptics: HapticsWrapper, onClick: () -> Un
                 horizontalArrangement = Arrangement.spacedBy(Space.xs)
             ) {
                 StatCell(
-                    label = "已锁定",
+                    label = "已攒",
                     value = formatYuanInt(view.savedCent),
                     color = SuccessGreen,
                     modifier = Modifier.weight(1f)

@@ -216,7 +216,6 @@ fun GoalDetailScreen(
 @Composable
 private fun EntryRow(e: Entry, onLongPress: () -> Unit) {
     val kept = e.decision == Entry.KEPT
-    val settled = e.settleState == Entry.SETTLED
 
     SurfaceCard(
         padding = PaddingValues(Space.sm),
@@ -239,10 +238,7 @@ private fun EntryRow(e: Entry, onLongPress: () -> Unit) {
                     maxLines = 1
                 )
                 Text(
-                    text = buildString {
-                        append(dayFmt.format(Date(e.createdAt)))
-                        if (kept) append(if (settled) " · 已转入" else " · 待转入")
-                    },
+                    text = dayFmt.format(Date(e.createdAt)),
                     fontSize = Fonts.micro,
                     color = IosWhite.copy(alpha = TextAlpha.tertiary)
                 )
@@ -251,11 +247,7 @@ private fun EntryRow(e: Entry, onLongPress: () -> Unit) {
                 text = (if (kept) "+" else "-") + formatYuan(e.amountCent),
                 fontSize = Fonts.bodyStrong,
                 fontWeight = FontWeight.SemiBold,
-                color = if (kept) {
-                    if (settled) SuccessGreen else SuccessGreen.copy(alpha = 0.55f)
-                } else {
-                    Color(0xFFFF9F45)
-                }
+                color = if (kept) SuccessGreen else Color(0xFFFF9F45)
             )
         }
     }
